@@ -1,3 +1,4 @@
+import { useEchoViewState } from '../lib/useEchoViewState';
 import React, { useState, useEffect, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
@@ -17,8 +18,8 @@ export function StudentsStaffPage() {
   const { user, showToast } = useAuth();
   const navigate = useNavigate();
   const [data, setData] = useState<any | null>(null);
-  const [tab, setTab] = useState<'students' | 'staff' | 'academics'>('students');
-  const [search, setSearch] = useState('');
+  const [tab, setTab] = useEchoViewState('tab');
+  const [search, setSearch] = useEchoViewState('search');
   const [classFilter, setClassFilter] = useState('all');
 
   // Enroll Student Modal

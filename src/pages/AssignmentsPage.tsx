@@ -1,3 +1,4 @@
+import { useEchoViewState } from '../lib/useEchoViewState';
 import React, { useState, useEffect, useCallback } from 'react';
 import {
   BookOpen,
@@ -27,7 +28,7 @@ export function AssignmentsPage() {
   const [data, setData] = useState<any | null>(null);
   const [loading, setLoading] = useState(true);
   const [subjectFilter, setSubjectFilter] = useState('all');
-  const [statusFilter, setStatusFilter] = useState('all');
+  const [statusFilter, setStatusFilter] = useEchoViewState('status');
 
   // Student submission modal
   const [activeAssignment, setActiveAssignment] = useState<any | null>(null);

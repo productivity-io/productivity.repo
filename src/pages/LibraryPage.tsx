@@ -1,3 +1,4 @@
+import { useEchoViewState } from '../lib/useEchoViewState';
 import React, { useState, useEffect, useCallback } from 'react';
 import {
   Library,
@@ -12,8 +13,8 @@ import { apiFetch } from '../lib/api';
 export function LibraryPage() {
   const { showToast } = useAuth();
   const [data, setData] = useState<any | null>(null);
-  const [search, setSearch] = useState('');
-  const [tab, setTab] = useState<'catalogue' | 'transactions'>('catalogue');
+  const [search, setSearch] = useEchoViewState('search');
+  const [tab, setTab] = useEchoViewState('tab');
 
   const loadLibrary = useCallback(async () => {
     try {

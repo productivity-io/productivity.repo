@@ -70,8 +70,8 @@ function ProtectedRoute({
 export function App() {
   return (
     <AuthProvider>
-      <EchoAssistant />
       <BrowserRouter>
+        <EchoAssistant />
         <Routes>
           <Route path="/login" element={<LoginPage />} />
           <Route path="/dashboard" element={<ProtectedRoute><DashboardPage /></ProtectedRoute>} />

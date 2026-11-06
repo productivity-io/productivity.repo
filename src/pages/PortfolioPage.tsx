@@ -1,3 +1,4 @@
+import { useEchoViewState } from '../lib/useEchoViewState';
 import React, { useState, useEffect, useCallback } from 'react';
 import {
   Briefcase,
@@ -27,7 +28,7 @@ export function PortfolioPage() {
   const { user, showToast } = useAuth();
   const [data, setData] = useState<any | null>(null);
   const [loading, setLoading] = useState(true);
-  const [categoryFilter, setCategoryFilter] = useState('all');
+  const [categoryFilter, setCategoryFilter] = useEchoViewState('category');
   const [selectedStudentId, setSelectedStudentId] = useState<number>(1);
 
   // Add Portfolio Entry Modal

@@ -1,3 +1,4 @@
+import { useEchoViewState } from '../lib/useEchoViewState';
 import React, { useState, useEffect, useCallback } from 'react';
 import {
   Clock,
@@ -17,8 +18,8 @@ export function TimetablePage() {
   const { user, showToast } = useAuth();
   const [data, setData] = useState<any | null>(null);
   const [loading, setLoading] = useState(true);
-  const [viewMode, setViewMode] = useState<'weekly' | 'daily'>('weekly');
-  const [selectedDay, setSelectedDay] = useState<string>('Thursday');
+  const [viewMode, setViewMode] = useEchoViewState('view');
+  const [selectedDay, setSelectedDay] = useEchoViewState('day');
   const [selectedClassSection, setSelectedClassSection] = useState<string>('1-1');
   const [teacherViewMode, setTeacherViewMode] = useState<'class' | 'personal'>('class');
 

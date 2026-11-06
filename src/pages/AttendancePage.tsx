@@ -1,3 +1,4 @@
+import { useEchoViewState } from '../lib/useEchoViewState';
 import React, { useState, useEffect, useCallback } from 'react';
 import {
   CalendarCheck,
@@ -19,7 +20,7 @@ export function AttendancePage() {
   const [loading, setLoading] = useState(true);
 
   // Student view state
-  const [studentTab, setStudentTab] = useState<'daily' | 'subject' | 'corrections'>('daily');
+  const [studentTab, setStudentTab] = useEchoViewState('tab');
   const [corrOpen, setCorrOpen] = useState(false);
   const [corrAttId, setCorrAttId] = useState<number>(0);
   const [corrRequestedStatus, setCorrRequestedStatus] = useState('present');

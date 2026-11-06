@@ -15,11 +15,23 @@ export default defineConfig({
     port: 5173,
     proxy: {
       '/api': {
-        target: 'http://localhost:3001',
+        target: process.env.VERITAS_API_PROXY || 'http://localhost:3001',
         changeOrigin: true,
       },
       '/uploads': {
-        target: 'http://localhost:3001',
+        target: process.env.VERITAS_API_PROXY || 'http://localhost:3001',
+        changeOrigin: true,
+      },
+    },
+  },
+  preview: {
+    proxy: {
+      '/api': {
+        target: process.env.VERITAS_API_PROXY || 'http://localhost:3001',
+        changeOrigin: true,
+      },
+      '/uploads': {
+        target: process.env.VERITAS_API_PROXY || 'http://localhost:3001',
         changeOrigin: true,
       },
     },

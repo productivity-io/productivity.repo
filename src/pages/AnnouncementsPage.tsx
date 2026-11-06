@@ -1,3 +1,4 @@
+import { useEchoViewState } from '../lib/useEchoViewState';
 import React, { useState, useEffect, useCallback } from 'react';
 import {
   Megaphone,
@@ -19,9 +20,9 @@ export function AnnouncementsPage() {
   const { user, showToast } = useAuth();
   const [announcements, setAnnouncements] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
-  const [search, setSearch] = useState('');
-  const [categoryFilter, setCategoryFilter] = useState('all');
-  const [readFilter, setReadFilter] = useState<'all' | 'unread' | 'read'>('all');
+  const [search, setSearch] = useEchoViewState('search');
+  const [categoryFilter, setCategoryFilter] = useEchoViewState('category');
+  const [readFilter, setReadFilter] = useEchoViewState('read');
 
   // Create Modal state
   const [createOpen, setCreateOpen] = useState(false);

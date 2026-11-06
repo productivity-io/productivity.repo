@@ -105,7 +105,7 @@
     if (!response.ok) {
       if (response.status === 401) token = null;
       const body = await response.json().catch(() => ({}));
-      throw new Error(body.error || `Chat request failed (${response.status}).`);
+      throw Object.assign(new Error(body.error || `Chat request failed (${response.status}).`), { status: response.status });
     }
     return response;
   }
@@ -114,7 +114,13 @@
     if (busy) return;
     setBusy(true);
     try {
-      if (token) await request("/sessions/current", { method: "DELETE", headers: { Authorization: `Bearer ${token}` } });
+      if (token) {
+        try {
+          await request("/sessions/current", { method: "DELETE", headers: { Authorization: `Bearer ${token}` } });
+        } catch (error) {
+          if (error.status !== 401) throw error;
+        }
+      }
       token = null;
       log.replaceChildren();
       bubble("assistant", config.branding.greeting);
@@ -130,6 +136,17 @@
     setBusy(true);
     bubble("user", message);
     input.value = "";
+    // Only trusted host-page code may handle a read-only website command.
+    // Model replies remain plain text and never enter this hook.
+    const command = { message };
+    host.dispatchEvent(new CustomEvent("echo-widget:command", { bubbles: true, detail: command }));
+    if (typeof command.reply === "string" && command.reply.length <= 4000) {
+      bubble("assistant", command.reply);
+      status.textContent = "Ready.";
+      setBusy(false);
+      input.focus();
+      return;
+    }
     const answer = bubble("assistant", "");
     status.textContent = "Thinking…";
     controller = new AbortController();
