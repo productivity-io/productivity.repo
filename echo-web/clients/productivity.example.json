@@ -1,0 +1,16 @@
+[
+  {
+    "site_id": "productivity-portal",
+    "branding": {
+      "name": "ECHO",
+      "accent": "#1d4ed8",
+      "greeting": "Hi! I can help you find your way around the school portal."
+    },
+    "allowed_origins": ["http://localhost:5173", "http://127.0.0.1:5173", "https://portal.example.com"],
+    "enabled_capabilities": ["chat"],
+    "knowledge": [
+      {"id": "portal-navigation", "title": "Portal navigation", "text": "The portal has modules for announcements, attendance, timetable, assignments, examinations, portfolio, transport, contacts, lost and found, leave requests, calendar, library and communication. Available modules depend on the signed-in user's role."},
+      {"id": "assistant-scope", "title": "Assistant scope", "text": "ECHO provides general portal navigation help from approved content. It cannot read or change student records, marks, attendance, messages, passwords or account permissions. Contact school staff for account-specific questions and official decisions."}
+    ]
+  }
+]
