@@ -10,6 +10,7 @@ import { seedDatabase } from './db/seed.js';
 import { createSessionToken, verifySessionToken, verifyPassword, hashPassword, SessionPayload } from './utils/auth.js';
 import { fileStorage } from './services/fileStorage.js';
 import { schoolService } from './services/schoolService.js';
+import { getEchoWidgetConfig } from './services/echo.js';
 
 const app = express();
 const PORT = Number(process.env.PORT) || 3001;
@@ -79,6 +80,15 @@ function requireRoles(...roles: Array<'student' | 'teacher' | 'coordinator' | 'p
 // ==========================================
 // 1. AUTHENTICATION ENDPOINTS
 // ==========================================
+
+app.get('/api/echo/config', requireAuth, (_req: Request, res: Response) => {
+  res.setHeader('Cache-Control', 'no-store');
+  try {
+    res.json(getEchoWidgetConfig());
+  } catch {
+    res.status(503).json({ error: 'The ECHO assistant is not configured. Contact the portal administrator.' });
+  }
+});
 
 app.get('/api/auth/demo-accounts', (_req: Request, res: Response) => {
   const allUsers = db.select().from(schema.users).all();

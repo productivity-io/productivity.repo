@@ -3,6 +3,7 @@ import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
 import { AuthProvider, useAuth, UserRole } from './context/AuthContext';
 import { AppShell } from './components/layout/AppShell';
 import { LoginPage } from './pages/LoginPage';
+import { EchoAssistant } from './components/EchoAssistant';
 
 // Lazy-loaded modules for optimal bundle splitting and fast navigation
 const DashboardPage = lazy(() => import('./pages/DashboardPage').then(m => ({ default: m.DashboardPage })));
@@ -69,6 +70,7 @@ function ProtectedRoute({
 export function App() {
   return (
     <AuthProvider>
+      <EchoAssistant />
       <BrowserRouter>
         <Routes>
           <Route path="/login" element={<LoginPage />} />
