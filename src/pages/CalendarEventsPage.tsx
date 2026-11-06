@@ -1,3 +1,4 @@
+import { useEchoViewState } from '../lib/useEchoViewState';
 import React, { useState, useEffect, useCallback } from 'react';
 import {
   Calendar,
@@ -14,7 +15,7 @@ import { apiFetch } from '../lib/api';
 export function CalendarEventsPage() {
   const { user, showToast } = useAuth();
   const [events, setEvents] = useState<any[]>([]);
-  const [categoryFilter, setCategoryFilter] = useState('all');
+  const [categoryFilter, setCategoryFilter] = useEchoViewState('category');
   const [modalOpen, setModalOpen] = useState(false);
 
   const [title, setTitle] = useState('');

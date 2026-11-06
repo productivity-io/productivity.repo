@@ -1,3 +1,4 @@
+import { useEchoViewState } from '../lib/useEchoViewState';
 import React, { useState, useEffect, useCallback } from 'react';
 import {
   Award,
@@ -24,7 +25,7 @@ export function ExaminationsPage() {
   const { user, showToast } = useAuth();
   const [data, setData] = useState<any | null>(null);
   const [loading, setLoading] = useState(true);
-  const [activeTab, setActiveTab] = useState<'results' | 'timetable' | 'report_card'>('results');
+  const [activeTab, setActiveTab] = useEchoViewState('tab');
   const [selectedExamId, setSelectedExamId] = useState<number>(1);
 
   // Staff Enter Marks Modal

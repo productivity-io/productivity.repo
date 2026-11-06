@@ -1,3 +1,4 @@
+import { useEchoViewState } from '../lib/useEchoViewState';
 import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
@@ -13,8 +14,8 @@ import { apiFetch } from '../lib/api';
 export function ContactsPage() {
   const navigate = useNavigate();
   const [contacts, setContacts] = useState<any[]>([]);
-  const [search, setSearch] = useState('');
-  const [category, setCategory] = useState('all');
+  const [search, setSearch] = useEchoViewState('search');
+  const [category, setCategory] = useEchoViewState('category');
 
   useEffect(() => {
     apiFetch('/api/contacts')

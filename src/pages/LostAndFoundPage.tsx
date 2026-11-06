@@ -1,3 +1,4 @@
+import { useEchoViewState } from '../lib/useEchoViewState';
 import React, { useState, useEffect, useCallback } from 'react';
 import {
   HelpCircle,
@@ -16,7 +17,7 @@ export function LostAndFoundPage() {
   const { user, showToast } = useAuth();
   const [items, setItems] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
-  const [typeFilter, setTypeFilter] = useState<'all' | 'lost' | 'found' | 'archived'>('all');
+  const [typeFilter, setTypeFilter] = useEchoViewState('type');
 
   // Report Modal
   const [reportOpen, setReportOpen] = useState(false);

@@ -10,7 +10,7 @@
     "build": "vite build",
     "start": "NODE_ENV=production tsx server/index.ts",
     "db:seed": "tsx server/db/seed.ts",
-    "test:echo": "tsx --test tests/echo-config.test.ts",
+    "test:echo": "tsx --test tests/echo-config.test.ts tests/echo-commands.test.ts",
     "test:echo:browser": "node tests/echo-browser.mjs"
   },
   "dependencies": {
