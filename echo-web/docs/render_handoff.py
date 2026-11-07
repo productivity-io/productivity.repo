@@ -21,7 +21,9 @@ for block in (root / 'ECHO-WEB-MASTER-HANDOFF.md').read_text(encoding='utf-8').s
         story.append(Paragraph(escape(block[3:]), styles['Heading2']))
     else:
         story.append(Paragraph(escape(block).replace('\n', '<br/>'), styles['BodyWrap']))
-    story.append(Spacer(1, 2))
+    # A spacer after a heading defeats ReportLab's keep-with-next behavior.
+    if not block.startswith('#'):
+        story.append(Spacer(1, 2))
 
 def footer(canvas, doc):
     canvas.saveState()
