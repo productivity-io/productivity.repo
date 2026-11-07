@@ -4,8 +4,10 @@ import { useLocation, useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import { apiFetch } from '../lib/api';
 import widgetUrl from '../../echo-web/widget/widget.js?url';
-import { resolvePortalCommand, ECHO_PAGES, portalHelp } from '../lib/echoCommands';
+import { ECHO_PAGES, portalHelp } from '../lib/echoCommands';
 import { confirmPortalAction } from '../lib/echoActionFeedback';
+import { EchoCommandSession } from '../lib/echoRecognition';
+import { getEchoSubjects } from '../lib/echoSubjectOptions';
 
 type EchoConfig =
   | { enabled: false }
@@ -33,6 +35,7 @@ export function EchoAssistant() {
 
     const controller = new AbortController();
     const instance = crypto.randomUUID();
+    const commands = new EchoCommandSession();
     let disposed = false;
     let script: HTMLScriptElement | undefined;
     const removeWidget = () => {
@@ -47,10 +50,13 @@ export function EchoAssistant() {
       const detail = (event as CustomEvent<{ message: string; reply?: string; replyPromise?: Promise<string> }>).detail;
       const state = current.current;
       if (!state.user || state.user.id !== userId || typeof detail?.message !== 'string') return;
-      const action = resolvePortalCommand(detail.message, {
+      const recognized = commands.resolve(detail.message, {
         path: state.location.pathname, search: state.location.search, role: state.user.role,
-        academicYears: state.academicYears.map(year => year.name),
+        academicYear: state.academicYear, academicYears: state.academicYears.map(year => year.name),
+        subjects: getEchoSubjects(userId),
       });
+      if (recognized?.reply) { detail.reply = recognized.reply; return; }
+      const action = recognized?.action;
       if (!action) return;
       let expectedHref = action.href;
       if (action.back) {
@@ -80,11 +86,15 @@ export function EchoAssistant() {
       if (!(host instanceof HTMLElement) || host.dataset.instance !== instance || state.user?.id !== userId) return;
       (event as CustomEvent).detail.context = portalHelp({
         path: state.location.pathname, search: state.location.search, role: state.user.role,
-        academicYears: state.academicYears.map(year => year.name),
+        academicYears: state.academicYears.map(year => year.name), subjects: getEchoSubjects(userId),
       });
     };
     document.addEventListener('echo-widget:command', handleCommand);
     document.addEventListener('echo-widget:context', handleContext);
+    const handleReset = (event: Event) => {
+      if (event.target instanceof HTMLElement && event.target.dataset.instance === instance) commands.reset();
+    };
+    document.addEventListener('echo-widget:reset', handleReset);
 
     apiFetch<EchoConfig>('/api/echo/config', { signal: controller.signal }).then(config => {
       if (disposed || !config.enabled) return;
@@ -104,6 +114,8 @@ export function EchoAssistant() {
       disposed = true;
       document.removeEventListener('echo-widget:command', handleCommand);
       document.removeEventListener('echo-widget:context', handleContext);
+      document.removeEventListener('echo-widget:reset', handleReset);
+      commands.reset();
       controller.abort();
       if (script) {
         script.dataset.cancelled = 'true';
@@ -114,8 +126,11 @@ export function EchoAssistant() {
   }, [userId]);
 
   useEffect(() => {
-    document.querySelectorAll('echo-chat-widget').forEach(host => host.dispatchEvent(new Event('echo-widget:refresh-context')));
-  }, [userId, user?.role, location.pathname, location.search]);
+    document.querySelectorAll('echo-chat-widget').forEach(host => {
+      host.dispatchEvent(new CustomEvent('echo-widget:reset', { bubbles: true }));
+      host.dispatchEvent(new Event('echo-widget:refresh-context'));
+    });
+  }, [userId, user?.role, academicYear, location.pathname, location.search]);
 
   return null;
 }

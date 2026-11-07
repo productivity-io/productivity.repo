@@ -171,6 +171,7 @@
         }
       }
       token = null;
+      host.dispatchEvent(new CustomEvent("echo-widget:reset", { bubbles: true }));
       log.replaceChildren();
       bubble("assistant", config.branding.greeting);
       status.textContent = "New conversation.";

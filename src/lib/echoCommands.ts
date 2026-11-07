@@ -8,7 +8,7 @@ export const ECHO_PAGES: readonly Page[] = [
   { path: '/attendance', label: 'Attendance', aliases: ['attendance', 'attendence', 'attendance portal', 'attendence portal', 'attendance page', 'attendence page'] },
   { path: '/timetable', label: 'Timetable', aliases: ['timetable', 'class timetable', 'schedule', 'time table', 'timtable'] },
   { path: '/assignments', label: 'Assignments', aliases: ['assignments', 'homework', 'assignment', 'assignements'] },
-  { path: '/examinations', label: 'Examinations', aliases: ['examinations', 'exams', 'results', 'exam', 'examination'] },
+  { path: '/examinations', label: 'Examinations', aliases: ['examinations', 'exams', 'results', 'exam', 'examination', 'marks', 'grades'] },
   { path: '/portfolio', label: 'Portfolio', aliases: ['portfolio', 'achievements'] },
   { path: '/transport', label: 'Transport', aliases: ['transport', 'bus routes', 'buses'] },
   { path: '/contacts', label: 'Contacts', aliases: ['contacts', 'contact directory'] },
@@ -38,7 +38,7 @@ export const ECHO_VIEWS: Record<string, Record<string, Field>> = {
     tab: { initial: 'catalogue', values: ['catalogue', 'transactions'], aliases: { 'issue history': 'transactions', 'due dates': 'transactions', 'book catalogue': 'catalogue', 'catalog': 'catalogue' } },
   },
   '/contacts': { search: { initial: '' }, category: { initial: 'all', values: ['all', 'academic', 'administration', 'transport', 'emergency', 'support'] } },
-  '/assignments': { status: { initial: 'all', values: ['all', 'assigned', 'in_progress', 'submitted', 'under_review', 'graded', 'overdue'] } },
+  '/assignments': { status: { initial: 'all', values: ['all', 'assigned', 'in_progress', 'submitted', 'under_review', 'graded', 'overdue'] }, subject: { initial: 'all' } },
   '/lost-and-found': { type: { initial: 'all', values: ['all', 'lost', 'found', 'archived'] } },
   '/portfolio': { category: { initial: 'all', values: ['all', 'academic', 'project', 'competition', 'arts_cultural', 'sports', 'award'] } },
   '/timetable': {
@@ -59,7 +59,9 @@ export function viewValue(path: string, field: string, params: URLSearchParams):
   return raw !== null && raw.length <= 200 && (!rule.values || rule.values.includes(raw)) ? raw : rule.initial;
 }
 
-type Context = { path: string; search: string; role: UserRole; academicYears: string[] };
+export type CommandContext = { path: string; search: string; role: UserRole; academicYears: string[]; subjects?: readonly SubjectOption[] };
+export type SubjectOption = { value: string; label: string; aliases?: readonly string[] };
+type Context = CommandContext;
 
 /** Public UI metadata only: never inspect records or send page content to a provider. */
 export function portalHelp(context: Context): { summary: string; suggestions: string[] } {
@@ -67,8 +69,8 @@ export function portalHelp(context: Context): { summary: string; suggestions: st
   if (!page) return { summary: 'Open a portal page to see its available commands.', suggestions: ['Open dashboard'] };
   const params = new URLSearchParams(context.search);
   const selections = Object.keys(ECHO_VIEWS[page.path] || {})
-    .filter(field => !((page.path === '/attendance' || page.path === '/assignments') && context.role !== 'student'))
-    .map(field => `${field}: ${viewValue(page.path, field, params).replace(/_/g, ' ') || 'none'}`);
+    .filter(field => !((page.path === '/attendance' || (page.path === '/assignments' && field === 'status')) && context.role !== 'student'))
+    .map(field => `${field}: ${field === 'subject' ? context.subjects?.find(s => s.value === viewValue(page.path, field, params))?.label || 'all' : viewValue(page.path, field, params).replace(/_/g, ' ') || 'none'}`);
   const suggestions: string[] = [];
   if (page.path === '/attendance' && context.role === 'student') suggestions.push('Show subject attendance', 'Show daily attendance');
   if (page.path === '/assignments' && context.role === 'student') suggestions.push('Show overdue assignments');
@@ -87,8 +89,8 @@ export function portalHelp(context: Context): { summary: string; suggestions: st
 }
 
 export type PortalCommand = { reply: string; href?: string; back?: boolean; academicYear?: string };
-const normalize = (text: string) => text.toLowerCase().replace(/_/g, ' ').replace(/\s+/g, ' ').trim();
-const allowed = (page: Page, role: UserRole) => !page.staff || ['teacher', 'coordinator', 'principal'].includes(role);
+export const normalize = (text: string) => text.toLowerCase().replace(/_/g, ' ').replace(/\s+/g, ' ').trim();
+export const allowed = (page: Page, role: UserRole) => !page.staff || ['teacher', 'coordinator', 'principal'].includes(role);
 const TYPO_MAP: Record<string, string> = {
   attendence: 'attendance',
   calender: 'calendar',
@@ -116,7 +118,7 @@ const TYPO_MAP: Record<string, string> = {
   settngs: 'settings',
 };
 
-const normalizePageTerm = (input: string): string => {
+export const normalizePageTerm = (input: string): string => {
   let cleaned = normalize(input);
   cleaned = cleaned.replace(/\s+(?:portal|page|screen|module|section|tab|view|hub)s?$/i, '').trim();
   cleaned = cleaned.replace(/^(?:the|my)\s+/i, '').trim();

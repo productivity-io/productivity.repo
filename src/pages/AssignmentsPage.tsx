@@ -13,6 +13,7 @@ import {
 } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 import { apiFetch, uploadLocalFile } from '../lib/api';
+import { registerEchoSubjects } from '../lib/echoSubjectOptions';
 
 const STATUS_BADGES: Record<string, string> = {
   assigned: 'bg-slate-100 text-slate-700',
@@ -27,7 +28,8 @@ export function AssignmentsPage() {
   const { user, showToast } = useAuth();
   const [data, setData] = useState<any | null>(null);
   const [loading, setLoading] = useState(true);
-  const [subjectFilter, setSubjectFilter] = useState('all');
+  const [rawSubject, setSubjectFilter] = useEchoViewState('subject');
+  const subjectFilter = data?.subjects?.some((s: { id: number }) => String(s.id) === rawSubject) ? rawSubject : 'all';
   const [statusFilter, setStatusFilter] = useEchoViewState('status');
 
   // Student submission modal
@@ -68,6 +70,10 @@ export function AssignmentsPage() {
   useEffect(() => {
     loadAssignments();
   }, [loadAssignments]);
+
+  useEffect(() => {
+    if (user && data?.subjects) return registerEchoSubjects(user.id, data.subjects);
+  }, [user?.id, data?.subjects]);
 
   const handleStudentSubmit = async (targetStatus: 'in_progress' | 'submitted') => {
     if (!activeAssignment) return;
