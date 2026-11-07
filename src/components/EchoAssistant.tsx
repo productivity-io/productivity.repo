@@ -1,4 +1,5 @@
 import { useEffect, useRef } from 'react';
+import { flushSync } from 'react-dom';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import { apiFetch } from '../lib/api';
@@ -53,9 +54,12 @@ export function EchoAssistant() {
       if (action.back) {
         if (trail.current.length < 2) { detail.reply = 'There is no previous portal view in this session.'; return; }
         trail.current.pop();
-        state.navigate(trail.current.at(-1)!, { replace: true });
-      } else if (action.href) state.navigate(action.href);
-      else if (action.academicYear) state.setAcademicYear(action.academicYear);
+        flushSync(() => { state.navigate(trail.current.at(-1)!, { replace: true }); });
+      } else if (action.href) {
+        flushSync(() => { state.navigate(action.href!); });
+      } else if (action.academicYear) {
+        flushSync(() => { state.setAcademicYear(action.academicYear!); });
+      }
       detail.reply = action.reply;
     };
     document.addEventListener('echo-widget:command', handleCommand);

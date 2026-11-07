@@ -70,7 +70,7 @@ function ProtectedRoute({
 export function App() {
   return (
     <AuthProvider>
-      <BrowserRouter>
+      <BrowserRouter useTransitions={false}>
         <EchoAssistant />
         <Routes>
           <Route path="/login" element={<LoginPage />} />

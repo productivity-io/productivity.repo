@@ -82,6 +82,12 @@ const TYPO_MAP: Record<string, string> = {
   leaves: 'leave requests',
   student: 'students',
   report: 'reports',
+  libary: 'library',
+  liberary: 'library',
+  portfolo: 'portfolio',
+  transpot: 'transport',
+  communicaton: 'communication',
+  settngs: 'settings',
 };
 
 const normalizePageTerm = (input: string): string => {
@@ -148,7 +154,7 @@ export function resolvePortalCommand(message: string, context: Context): PortalC
   }
 
   const searchIn = original.match(/^(?:search|find|look for) (.+?) (?:in|on) (?:the )?(.+)$/i);
-  const searchFor = original.match(/^(?:search|find|look)(?: (?:the )?(library|books|announcements|contacts|directory))? (?:for )?(.+)$/i);
+  const searchFor = original.match(/^(?:search|find|look)(?: (?:the )?(library|books|announcements|contacts|directory|students|staff|faculty))? (?:for )?(.+)$/i);
   if (searchIn || searchFor) {
     const destination = searchIn ? pageNamed(searchIn[2]) : searchFor?.[1] ? pageNamed(searchFor[1]) : currentPage;
     const query = (searchIn?.[1] || searchFor?.[2] || '').trim();

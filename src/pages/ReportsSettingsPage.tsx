@@ -28,9 +28,10 @@ export function ReportsSettingsPage() {
   const { user, refreshUser, showToast } = useAuth();
   const location = useLocation();
   const isReportsRoute = location.pathname.startsWith('/reports');
+  const isSettingsRoute = location.pathname.startsWith('/settings');
 
   const [activeSection, setActiveSection] = useState<'profile' | 'reports' | 'school_settings'>(
-    isReportsRoute ? 'reports' : 'profile'
+    isReportsRoute ? 'reports' : isSettingsRoute && user?.role === 'principal' ? 'school_settings' : 'profile'
   );
   const [directoryData, setDirectoryData] = useState<any | null>(null);
   const [settingsData, setSettingsData] = useState<any | null>(null);
@@ -49,8 +50,14 @@ export function ReportsSettingsPage() {
   const [tagline, setTagline] = useState('Excellence in Inquiry, Integrity & Innovation');
 
   useEffect(() => {
-    setActiveSection(location.pathname.startsWith('/reports') ? 'reports' : 'profile');
-  }, [location.pathname]);
+    if (location.pathname.startsWith('/reports')) {
+      setActiveSection('reports');
+    } else if (location.pathname.startsWith('/settings') && user?.role === 'principal') {
+      setActiveSection('school_settings');
+    } else {
+      setActiveSection('profile');
+    }
+  }, [location.pathname, user?.role]);
 
   const loadData = useCallback(async () => {
     try {

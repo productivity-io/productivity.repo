@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { getEchoWidgetConfig } from '../server/services/echo.ts';
+import { getEchoWidgetConfig, resolvePortalEchoConfig } from '../server/services/echo.ts';
 
 const enabled = {
   ECHO_CHAT_ENABLED: 'true', ECHO_SITE_ID: 'productivity-portal', ECHO_API_URL: 'https://echo.example.com/',
@@ -33,4 +33,21 @@ test('credentials, query strings, fragments, paths and non-HTTP APIs are rejecte
 test('loopback HTTP is accepted only outside production', () => {
   assert.equal(getEchoWidgetConfig({ ...enabled, ECHO_API_URL: 'http://127.0.0.1:8765', NODE_ENV: 'test' }).enabled, true);
   assert.throws(() => getEchoWidgetConfig({ ...enabled, ECHO_API_URL: 'http://127.0.0.1:8765', NODE_ENV: 'production' }));
+});
+
+test('portal resolver enables built-in /api/echo service by default and respects explicit disable or external API', () => {
+  assert.deepEqual(resolvePortalEchoConfig({}), {
+    enabled: true,
+    siteId: 'productivity-portal',
+    apiBaseUrl: '/api/echo',
+  });
+  assert.deepEqual(resolvePortalEchoConfig({ ECHO_CHAT_ENABLED: 'false' }), { enabled: false });
+  assert.deepEqual(
+    resolvePortalEchoConfig({ ECHO_CHAT_ENABLED: 'true', ECHO_SITE_ID: 'productivity-portal', ECHO_API_URL: 'https://echo-api.example.com' }),
+    { enabled: true, siteId: 'productivity-portal', apiBaseUrl: '/api/echo' }
+  );
+  assert.deepEqual(
+    resolvePortalEchoConfig({ ECHO_CHAT_ENABLED: 'true', ECHO_SITE_ID: 'productivity-portal', ECHO_API_URL: 'https://live-echo.example.com/' }),
+    { enabled: true, siteId: 'productivity-portal', apiBaseUrl: 'https://live-echo.example.com' }
+  );
 });

@@ -85,7 +85,15 @@ test('spelling mistakes and portal suffixes on other pages resolve correctly', (
   assert.equal(resolvePortalCommand('open assignments portal', context)?.href, '/assignments');
   assert.equal(resolvePortalCommand('open calender', context)?.href, '/calendar');
   assert.equal(resolvePortalCommand('open library portal', context)?.href, '/library');
+  assert.equal(resolvePortalCommand('open libary', context)?.href, '/library');
   assert.equal(resolvePortalCommand('open timetable portal', context)?.href, '/timetable');
+});
+test('staff can search students and staff directories via ECHO commands', () => {
+  const staffCtx = { ...context, role: 'teacher' as const };
+  const stuSearch = resolvePortalCommand('Search students for Aarav', staffCtx)!;
+  assert.equal(stuSearch.href, '/students?echo_search=Aarav');
+  const blockedForStudent = resolvePortalCommand('Search students for Aarav', context)!;
+  assert.equal(blockedForStudent.href, undefined);
 });
 test('conversational queries about attendance are preserved for general AI engine', () => {
   for (const text of ['What is attendance policy?', 'How do I check attendance?', 'Can you explain attendance rules?']) {

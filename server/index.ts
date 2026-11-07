@@ -3,31 +3,33 @@ import cors from 'cors';
 import cookieParser from 'cookie-parser';
 import multer from 'multer';
 import path from 'node:path';
+import fs from 'node:fs';
 import { eq, desc, and } from 'drizzle-orm';
-import { db, sqlite } from './db/index.js';
+import { db } from './db/index.js';
 import * as schema from './db/schema.js';
 import { seedDatabase } from './db/seed.js';
 import { createSessionToken, verifySessionToken, verifyPassword, hashPassword, SessionPayload } from './utils/auth.js';
 import { fileStorage } from './services/fileStorage.js';
 import { schoolService } from './services/schoolService.js';
-import { getEchoWidgetConfig } from './services/echo.js';
+import { resolvePortalEchoConfig, createEchoServiceRouter } from './services/echo.js';
 
 const app = express();
 const PORT = Number(process.env.PORT) || 3001;
+const isServerless = Boolean(process.env.VERCEL || process.env.AWS_LAMBDA_FUNCTION_NAME);
 
 app.use(cors({ origin: true, credentials: true }));
-app.use(express.json({ limit: '5mb' }));
+app.use(express.json({ limit: '4mb' }));
 app.use(cookieParser());
 
-// Serve uploaded files locally
-app.use('/uploads', express.static(path.resolve(process.cwd(), 'uploads')));
+// Serve uploaded files from active upload directory (./uploads locally, /tmp/veritas-uploads on serverless)
+app.use('/uploads', express.static(fileStorage.getUploadDir()));
 
-// Initialize & seed database on boot
+// Initialize & seed database on boot / cold start
 seedDatabase(false);
 
 const upload = multer({
   storage: multer.memoryStorage(),
-  limits: { fileSize: 10 * 1024 * 1024 },
+  limits: { fileSize: isServerless ? 4 * 1024 * 1024 : 10 * 1024 * 1024 },
 });
 
 // Extend Express Request
@@ -78,13 +80,24 @@ function requireRoles(...roles: Array<'student' | 'teacher' | 'coordinator' | 'p
 }
 
 // ==========================================
-// 1. AUTHENTICATION ENDPOINTS
+// 1. HEALTH, ECHO SERVICE & AUTHENTICATION ENDPOINTS
 // ==========================================
+
+app.get('/api/health', (_req: Request, res: Response) => {
+  res.json({
+    status: 'ok',
+    service: 'veritas-school-ecosystem',
+    runtime: isServerless ? 'serverless' : 'node',
+  });
+});
+
+// Self-hosted ECHO v1 chat endpoints (isolated session tokens, zero portal cookie/token access)
+app.use('/api/echo/v1/sites', createEchoServiceRouter());
 
 app.get('/api/echo/config', requireAuth, (_req: Request, res: Response) => {
   res.setHeader('Cache-Control', 'no-store');
   try {
-    res.json(getEchoWidgetConfig());
+    res.json(resolvePortalEchoConfig());
   } catch {
     res.status(503).json({ error: 'The ECHO assistant is not configured. Contact the portal administrator.' });
   }
@@ -145,7 +158,9 @@ app.post('/api/auth/login', (req: Request, res: Response) => {
 
   res.cookie('veritas_session', token, {
     httpOnly: true,
+    secure: process.env.NODE_ENV === 'production' || isServerless,
     sameSite: 'lax',
+    path: '/',
     maxAge: rememberMe ? 30 * 24 * 3600 * 1000 : 24 * 3600 * 1000,
   });
 
@@ -154,7 +169,7 @@ app.post('/api/auth/login', (req: Request, res: Response) => {
 });
 
 app.post('/api/auth/logout', (_req: Request, res: Response) => {
-  res.clearCookie('veritas_session');
+  res.clearCookie('veritas_session', { path: '/' });
   res.json({ success: true });
 });
 
@@ -2664,7 +2679,29 @@ app.post('/api/settings/reset-seed', requireAuth, requireRoles('principal'), (re
   res.json({ success: true });
 });
 
-app.listen(PORT, () => {
-  console.log(`Veritas School Management API Server running on http://localhost:${PORT}`);
-});
+// Serve built Vite SPA in standalone production mode (non-Vercel single-server deployments)
+if (process.env.NODE_ENV === 'production' && !isServerless) {
+  const distDir = path.resolve(process.cwd(), 'dist');
+  const indexHtml = path.join(distDir, 'index.html');
+  if (fs.existsSync(indexHtml)) {
+    app.use(express.static(distDir));
+    app.get('*', (req: Request, res: Response, next: NextFunction) => {
+      if (req.path.startsWith('/api/') || req.path.startsWith('/uploads/')) {
+        next();
+        return;
+      }
+      res.sendFile(indexHtml);
+    });
+  }
+}
+
+if (!isServerless && process.env.VERITAS_SERVERLESS !== '1') {
+  app.listen(PORT, () => {
+    console.log(`Veritas School Management API Server running on http://localhost:${PORT}`);
+  });
+}
+
+export { app };
+export default app;
+
 

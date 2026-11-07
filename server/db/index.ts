@@ -1,20 +1,30 @@
-import Database from 'better-sqlite3';
-import { drizzle } from 'drizzle-orm/better-sqlite3';
 import * as schema from './schema.js';
-import path from 'path';
-import fs from 'fs';
+import { SqliteClientAdapter, createDrizzleSqlite } from './sqliteAdapter.js';
+import path from 'node:path';
+import fs from 'node:fs';
+import os from 'node:os';
 
-const dataDir = path.resolve(process.cwd(), 'data');
+const isServerless = Boolean(process.env.VERCEL || process.env.AWS_LAMBDA_FUNCTION_NAME);
+const dataDir = process.env.VERITAS_DATA_DIR
+  ? path.resolve(process.env.VERITAS_DATA_DIR)
+  : isServerless
+    ? path.join(os.tmpdir(), 'veritas-data')
+    : path.resolve(process.cwd(), 'data');
+
 if (!fs.existsSync(dataDir)) {
   fs.mkdirSync(dataDir, { recursive: true });
 }
 
 export const dbFilePath = path.join(dataDir, 'veritas_school.db');
-export const sqlite = new Database(dbFilePath);
-sqlite.pragma('journal_mode = WAL');
+export const sqlite = new SqliteClientAdapter(dbFilePath);
+try {
+  sqlite.pragma('journal_mode = WAL');
+} catch {
+  sqlite.pragma('journal_mode = DELETE');
+}
 sqlite.pragma('foreign_keys = ON');
 
-export const db = drizzle(sqlite, { schema });
+export const db = createDrizzleSqlite(sqlite, schema);
 
 export function initializeDatabaseTables() {
   sqlite.exec(`

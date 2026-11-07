@@ -21,6 +21,9 @@ const previewPort = await freePort();
 const apiOrigin = `http://127.0.0.1:${apiPort}`;
 const portalOrigin = `http://127.0.0.1:${previewPort}`;
 const executablePath = process.env.ECHO_BROWSER || [
+  '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome',
+  '/Applications/Chromium.app/Contents/MacOS/Chromium',
+  '/Applications/Brave Browser.app/Contents/MacOS/Brave Browser',
   'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe',
   'C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe',
   '/usr/bin/chromium', '/usr/bin/google-chrome',
