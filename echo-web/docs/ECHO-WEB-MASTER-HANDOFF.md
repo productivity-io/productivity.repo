@@ -1,6 +1,20 @@
 # ECHO to Veritas - Master Handoff
 
-Updated: 2026-11-07. Branch pushed, PR #2 open, quality CI PASS, real external-provider smoke PASS, security CI FAIL. Merge blocked. No deployment performed.
+Updated: 2026-11-07. Latest phase: intelligent typo recognition complete on local feature/echo-fuzzy-commands, with 87 tests, TypeScript, build and browser regression PASS. New branch not pushed. Prior parent PR #2 remains open and security-blocked. No merge/deployment performed.
+
+## Latest typo-recognition phase
+
+Current branch: feature/echo-fuzzy-commands. Base: 67d238ffb52aa526a8db57957af3ea78abe37e1d. Implementation: 0445f910b7fb5a8308965f1954556c62da5cb572. Documentation commit follows it; use git log -1 for exact final documentation HEAD. No uncommitted user work was present at branch creation. Earlier commits, PR and source dirty work preserved.
+
+Read FUZZY_COMMANDS.md for full aliases/strategy/thresholds. The recognizer reuses the existing exact parser and normalization, then scores real registry candidates with bounded edit distance/transposition. High >=0.82 with >=0.12 margin executes safe view navigation; medium >=0.62 or close competitors asks a choice; low executes nothing. Bare fuzzy fragments need confirmation. Conservative grammar preserves ordinary questions and words such as slow/shop/cake. Literal searches are never corrected/split. No extra model calls or dependencies.
+
+Pending choices live for 60 seconds, scoped to widget/account, role, view/query, year and available options. Selected commands are re-resolved; reset, unrelated messages, view/role/year changes and logout discard old intent. At most three same-destination navigation/view clauses compose one final URL only after every part validates. Unsupported parts execute nothing. Existing router/URL confirmation verifies execution.
+
+Existing authenticated Assignments subject buttons are now URL-bound and supply current names/codes/IDs locally. Maths aliases the actual Advanced Mathematics option; no new school record access/API calls. Student attendance has no Mathematics filter, so that request is rejected without partial navigation. Marks/grades alias the existing Examinations Results route; no Grades page created.
+
+Files: src/lib/echoRecognition.ts, echoSubjectOptions.ts, echoCommands.ts; src/components/EchoAssistant.tsx; src/pages/AssignmentsPage.tsx; echo-web/widget/widget.js; tests/echo-commands.test.ts and echo-browser.mjs; existing echo-web/docs planning/handoff and README. No backend/auth or desktop/Android changes.
+
+Final local checks PASS: 87 command/config tests (66 baseline retained), TypeScript, 2045-module production build, syntax/whitespace, full Chrome browser regression using disposable demo DB. Browser verifies actual fuzzy routes, Mathematics assignment cards, sports button, Results table, preserved filters, confidence/cancel/numbered choices, atomic plans, rejected unsupported actions, stale reset/away-back intent, ordinary chat, Stop/errors/mobile/logout/account isolation. Supported view commands cause no conversation call or school write. Fake SSE remains transport evidence, not a new provider test. Initial heap-limited build and development test failures were corrected; final feature checks pass. Separate security audit rerun: 3 PASS / 6 FAIL, unchanged and still blocking release.
 
 ## Objective and authorized scope
 
@@ -14,13 +28,13 @@ Four additions are implemented: local contextual help/suggestions, verified acti
 - Source HEAD: dee9b7014f0c3e788570c85c4126820caa15d574
 - Target: https://github.com/productivity-io/productivity.repo
 - Target path: F:\Downloads\Veritas-Echo-Integration
-- Active target branch: feature/echo-context-and-controls
+- Active target branch: feature/echo-fuzzy-commands (parent: feature/echo-context-and-controls)
 - Current main baseline: 50f194969bc5042e6dfca3cd99460946c57a672d
 - Historical main: 9c6e806692513342a1e7c30cfe7e2d85e7405826
 - Feature implementation: 15f2410d54748d7c6cd0f7d41c9947f6d9aee245
 - Initial handoff: eb69a8274d6281898d69bdbf1b7c01e95f8eff65
 - CI/security/provider tests: 94b5231e7bcf142e5662182abec24a7e187e3d09
-- PR: https://github.com/productivity-io/productivity.repo/pull/2
+- Parent-branch PR only: https://github.com/productivity-io/productivity.repo/pull/2; latest local branch has no PR
 
 Documentation commits follow this audited code/test revision. Obtain the exact current documentation HEAD with git log -1. Working tree should be clean after the handoff commit/push. No merge or auto-merge performed.
 
@@ -67,7 +81,7 @@ Action confirmation covers view state, not lazy-page data readiness. Stop cannot
 
 Source pre-existing modified: README.md, docs/CODEX_HANDOFF.md, echo-web/README.md, backend/server.py, docs/ARCHITECTURE.md, docs/MIGRATION.md, docs/VALIDATION.md, tests/browser-check.mjs, tests/test_web.py, widget/widget.js. Untracked: echo-web/tests/live_smoke.py. Do not stage/overwrite/reset. Desktop/Android untouched.
 
-Target pushed, PR open. Remaining: approved security/session design and remediation, rerun all checks on exact final head, then merge only when every gate passes. No force-push, bypass or public deployment. No auto-merge enabled.
+Parent branch is pushed with PR #2 open; latest fuzzy branch is local only, clean after its documentation commit. Review its changes before any publication. Prior security/session design and remediation remain separate release gates. Latest user instruction prohibits merge/deployment without approval. No force-push, bypass or auto-merge.
 
 Markdown: F:\Downloads\Veritas-Echo-Integration\echo-web\docs\ECHO-WEB-MASTER-HANDOFF.md
 
@@ -77,4 +91,4 @@ Backups: F:\ECHO-Handoff\ECHO-WEB-MASTER-HANDOFF.md and F:\ECHO-Handoff\ECHO-WEB
 
 ## Ready-to-copy continuation prompt
 
-Continue ECHO/Veritas at F:\Downloads\Veritas-Echo-Integration on feature/echo-context-and-controls, PR https://github.com/productivity-io/productivity.repo/pull/2. Read this handoff, RELEASE_VERIFICATION.md, PENDING_WORK.md and PR checks first. Inspect branches/status/log/remotes/worktrees. Four widget features are complete; quality CI and real external-provider smoke PASS. Security CI FAILS six documented requirements: do not merge. Source ECHO at F:\Downloads\Echo-Web-Preparation has unrelated dirty work; preserve it. Agree on account-bound session/origin/secret/rate-limit/hosting design before changing permissions. Fix requirements without weakening tests. Preserve commands, filters, text conversations, logout/isolation and public-data boundaries. No voice, computer control or school-record writes. Existing FreeLLMAPI-configured gateway is approved for tests; keys backend-only. Static/fake replies are not provider evidence. Verify command tests, TypeScript, build, browser and security CI on exact final head. Update both handoff formats/backups. Merge authorized only when every check passes; deployment not authorized.
+Continue ECHO/Veritas at F:\Downloads\Veritas-Echo-Integration on local feature/echo-fuzzy-commands, based on 67d238f with implementation 0445f910b7fb5a8308965f1954556c62da5cb572. Read this latest phase, FUZZY_COMMANDS.md, PENDING_WORK.md and IMPLEMENTATION_LOG.md first; inspect Git status/log/remotes/worktrees. Fuzzy recognition is complete, with 87 tests, TypeScript/build and full browser regression PASS. New branch not pushed and no new PR; prior parent PR #2 still has six baseline security failures. Preserve source ECHO dirty work and all prior commits. Do not recreate completed features or invent Grades/attendance-subject controls. Medium matches require expiring, scoped confirmation; unsupported multi-part plans execute nothing. Preserve ordinary chat, filters, role checks, logout and local-only recognition. No voice, computer control, new private-record access or writes. Do not weaken security tests or change permissions without agreement. Recheck relevant tests after further code edits. Keep Markdown/PDF handoffs and F:\ECHO-Handoff copies current. Latest instruction: do not merge or deploy without approval.

@@ -17,3 +17,7 @@ Existing planning location: `echo-web/` (README and VALIDATION); these planning 
 | Desktop encrypted memory, lists, shell/device actions | ECHO `storage.py`, desktop orchestrator | Deliberately excluded from school website |
 
 Upstream ECHO working tree contains existing uncommitted changes. It is read-only for this task. Desktop/Android untouched.
+
+## Subsequent intelligent recognition milestone
+
+`feature/echo-fuzzy-commands` is based on `67d238f`, with code commit `0445f91`, local only. Added bounded edit-distance matching against the existing registry, conservative intent grammar, high/medium/low confidence handling, short-lived account/view-bound confirmation and atomic same-page plans. Connected existing authenticated Assignments subject controls to URL state; no student subject-specific attendance filter exists. Marks/grades alias the actual Examinations page. See FUZZY_COMMANDS.md for aliases, thresholds and limitations. Current local evidence: 87 tests, TypeScript, build and full browser regression PASS. Prior backend security audit remains 3 PASS / 6 FAIL; no security remediation or merge claim.

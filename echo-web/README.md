@@ -45,6 +45,11 @@ chat, so approve the service's data-handling notice and provider policy before l
 
 ## Local assistance and response controls
 
+Typo-tolerant command recognition is documented in `docs/FUZZY_COMMANDS.md`. It matches only registered routes
+and controls locally, asks confirmation for uncertain matches, and supports atomic navigation-plus-filter plans.
+Existing Assignments subject buttons now preserve URL state and support loaded subject aliases such as maths;
+student attendance has no subject filter. No extra AI calls are used for supported commands.
+
 - Page suggestions use the existing route/control registry and the signed-in role. “Help with this page” and
   “What filters are selected?” describe validated local view state without a model call or record lookup.
 - Navigation replies wait for matching React router and browser URL state; year changes wait for matching

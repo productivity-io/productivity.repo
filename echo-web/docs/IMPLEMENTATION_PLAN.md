@@ -8,3 +8,7 @@
 6. Update evidence and both master handoffs; prepare a dedicated commit and PR summary. Do not merge or deploy.
 
 Tests must distinguish fake SSE transport checks, real built-in help-engine tests, and unavailable live-provider validation.
+
+## User-requested typo-recognition phase - complete
+
+Inspect/preserve baseline -> local feature branch -> registry-based bounded fuzzy ranking -> confirmation lifecycle -> authenticated existing subject options -> atomic plans -> regressions and real browser view verification -> updated handoffs and local commits. No new provider calls/dependencies, push, merge or deployment in this phase. See FUZZY_COMMANDS.md and the implementation log for final evidence.

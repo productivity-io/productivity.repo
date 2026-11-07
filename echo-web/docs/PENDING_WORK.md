@@ -1,5 +1,7 @@
 # Pending work and gates
 
+- Latest phase: intelligent typo recognition is complete on local `feature/echo-fuzzy-commands`, implementation `0445f91`. Local 87-test suite, TypeScript/build/browser checks PASS. See FUZZY_COMMANDS.md. New branch not pushed; no new PR or merge/deployment. Prior PR #2 remains a separate blocked parent-branch review. Latest user instruction requires approval before merging/deploying.
+
 - Four selected features are implemented and verified. No unfinished selected implementation remains.
 - Real-provider round trip now PASS for the supported external ECHO mode using the user-approved existing FreeLLMAPI-configured gateway; see RELEASE_VERIFICATION.md. Built-in OpenAI path remains untested against a real provider.
 - Existing built-in backend has a hard-coded fallback signing secret, public session endpoints, permissive reflected CORS, unbounded process-local stores and no account-bound session identity. Keep knowledge public; review these before production/private data. This task does not change permissions or supply private records.

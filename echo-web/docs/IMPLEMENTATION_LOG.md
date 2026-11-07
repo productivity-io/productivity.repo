@@ -37,3 +37,15 @@
 - Full evidence, code review and precise boundaries: RELEASE_VERIFICATION.md. No authentication/permission changes, merge or deployment performed. Failures intentionally remain blocking.
 - Parallel local TypeScript/provider test attempts ran out of system memory; provider rerun sequentially with Node 22 bounded heaps PASS. Do not count failed OOM run as a TypeScript pass; current CI provides fresh quality verification.
 - GitHub PR CI run 42366552606: quality job 128385718936 PASS (TypeScript, build, full browser regression); session-security job 128385718831 FAIL. Independently reproduced on Linux. PR remains open; no auto-merge enabled.
+
+## Intelligent typo recognition - subsequent user request
+
+- Initial state clean on feature/echo-context-and-controls at `67d238ffb52aa526a8db57957af3ea78abe37e1d`; remotes/worktrees inspected. Prior commits `15f2410` and `eb69a82` and later release evidence preserved.
+- Created local `feature/echo-fuzzy-commands`. Implementation commit: `0445f910b7fb5a8308965f1954556c62da5cb572`.
+- Added `src/lib/echoRecognition.ts` and `echoSubjectOptions.ts`; reused exported normalization, registry and exact resolver from `echoCommands.ts`. Added marks/grades aliases and existing Assignments subject URL state.
+- Updated `EchoAssistant.tsx` to use confidence-aware resolution and instance-owned, expiring confirmation. Existing observed router/year feedback retained. New chat, role/year/view changes and logout invalidate pending intent.
+- Updated `AssignmentsPage.tsx` to register only authenticated existing subject names/codes/IDs and reuse actual filter buttons. No attendance subject filter or Grades route invented. Widget emits reset notification; no new model or tool execution path.
+- Extended `echo-commands.test.ts` and `echo-browser.mjs`. PASS 87 unit/config tests; TypeScript; production build (2045 modules); widget syntax/diff checks; full production-build Chrome regression with temporary demo DB. Verified actual routes, table/button/card changes, confidence prompts, cancellations, ambiguity, preserved filters, no partial unsupported plans, reset/away-back stale intent, ordinary chat, mobile and account isolation. View commands triggered only GET portal requests and no remote conversation calls.
+- Development-only failures corrected: sports scoring calibration, lazy marks-table test timing, and over-broad verb substitution (slow -> show). Unit tests now protect valid non-command words. An initial 192 MB build heap was too small; existing Node 22 rerun at 512 MB PASS.
+- Separately reran existing security audit: 3 PASS / 6 FAIL, unchanged baseline. Server/auth/backend files untouched; no permissions changed. No new live-provider test performed; previous provider result remains historical external-mode evidence.
+- Used PDF and React review skills. Updated FUZZY_COMMANDS.md, inventory/plan/log/pending documentation and master Markdown/PDF. Source ECHO dirty work preserved. This branch is not pushed; no new PR, merge or deployment.
