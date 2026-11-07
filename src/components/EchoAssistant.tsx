@@ -4,20 +4,21 @@ import { useLocation, useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import { apiFetch } from '../lib/api';
 import widgetUrl from '../../echo-web/widget/widget.js?url';
-import { resolvePortalCommand, ECHO_PAGES } from '../lib/echoCommands';
+import { resolvePortalCommand, ECHO_PAGES, portalHelp } from '../lib/echoCommands';
+import { confirmPortalAction } from '../lib/echoActionFeedback';
 
 type EchoConfig =
   | { enabled: false }
   | { enabled: true; siteId: string; apiBaseUrl: string };
 
 export function EchoAssistant() {
-  const { user, academicYears, setAcademicYear } = useAuth();
+  const { user, academicYear, academicYears, setAcademicYear } = useAuth();
   const userId = user?.id;
   const location = useLocation();
   const navigate = useNavigate();
   // Keep the authenticated widget/conversation mounted while the router changes pages.
-  const current = useRef({ user, location, navigate, academicYears, setAcademicYear });
-  current.current = { user, location, navigate, academicYears, setAcademicYear };
+  const current = useRef({ user, location, navigate, academicYear, academicYears, setAcademicYear });
+  current.current = { user, location, navigate, academicYear, academicYears, setAcademicYear };
   const trail = useRef<string[]>([]);
   useEffect(() => { trail.current = []; }, [userId]);
   useEffect(() => {
@@ -43,7 +44,7 @@ export function EchoAssistant() {
     const handleCommand = (event: Event) => {
       const host = event.target;
       if (!(host instanceof HTMLElement) || host.dataset.instance !== instance) return;
-      const detail = (event as CustomEvent<{ message: string; reply?: string }>).detail;
+      const detail = (event as CustomEvent<{ message: string; reply?: string; replyPromise?: Promise<string> }>).detail;
       const state = current.current;
       if (!state.user || state.user.id !== userId || typeof detail?.message !== 'string') return;
       const action = resolvePortalCommand(detail.message, {
@@ -51,18 +52,39 @@ export function EchoAssistant() {
         academicYears: state.academicYears.map(year => year.name),
       });
       if (!action) return;
+      let expectedHref = action.href;
       if (action.back) {
         if (trail.current.length < 2) { detail.reply = 'There is no previous portal view in this session.'; return; }
         trail.current.pop();
-        flushSync(() => { state.navigate(trail.current.at(-1)!, { replace: true }); });
+        expectedHref = trail.current.at(-1)!;
+        flushSync(() => { state.navigate(expectedHref!, { replace: true }); });
       } else if (action.href) {
         flushSync(() => { state.navigate(action.href!); });
       } else if (action.academicYear) {
         flushSync(() => { state.setAcademicYear(action.academicYear!); });
       }
-      detail.reply = action.reply;
+      if (expectedHref || action.academicYear) {
+        const expected = expectedHref ? new URL(expectedHref, window.location.origin) : null;
+        detail.replyPromise = confirmPortalAction(() => {
+          const observed = current.current;
+          return observed.user?.id === userId && (expected
+            ? observed.location.pathname === expected.pathname && observed.location.search === expected.search
+              && window.location.pathname === expected.pathname && window.location.search === expected.search
+            : observed.academicYear === action.academicYear);
+        }, expected ? 'View confirmed. ' + action.reply : action.reply, controller.signal);
+      } else detail.reply = action.reply;
+    };
+    const handleContext = (event: Event) => {
+      const host = event.target;
+      const state = current.current;
+      if (!(host instanceof HTMLElement) || host.dataset.instance !== instance || state.user?.id !== userId) return;
+      (event as CustomEvent).detail.context = portalHelp({
+        path: state.location.pathname, search: state.location.search, role: state.user.role,
+        academicYears: state.academicYears.map(year => year.name),
+      });
     };
     document.addEventListener('echo-widget:command', handleCommand);
+    document.addEventListener('echo-widget:context', handleContext);
 
     apiFetch<EchoConfig>('/api/echo/config', { signal: controller.signal }).then(config => {
       if (disposed || !config.enabled) return;
@@ -81,6 +103,7 @@ export function EchoAssistant() {
     return () => {
       disposed = true;
       document.removeEventListener('echo-widget:command', handleCommand);
+      document.removeEventListener('echo-widget:context', handleContext);
       controller.abort();
       if (script) {
         script.dataset.cancelled = 'true';
@@ -89,6 +112,10 @@ export function EchoAssistant() {
       removeWidget();
     };
   }, [userId]);
+
+  useEffect(() => {
+    document.querySelectorAll('echo-chat-widget').forEach(host => host.dispatchEvent(new Event('echo-widget:refresh-context')));
+  }, [userId, user?.role, location.pathname, location.search]);
 
   return null;
 }

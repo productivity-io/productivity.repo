@@ -60,6 +60,32 @@ export function viewValue(path: string, field: string, params: URLSearchParams):
 }
 
 type Context = { path: string; search: string; role: UserRole; academicYears: string[] };
+
+/** Public UI metadata only: never inspect records or send page content to a provider. */
+export function portalHelp(context: Context): { summary: string; suggestions: string[] } {
+  const page = ECHO_PAGES.find(p => p.path === context.path && allowed(p, context.role));
+  if (!page) return { summary: 'Open a portal page to see its available commands.', suggestions: ['Open dashboard'] };
+  const params = new URLSearchParams(context.search);
+  const selections = Object.keys(ECHO_VIEWS[page.path] || {})
+    .filter(field => !((page.path === '/attendance' || page.path === '/assignments') && context.role !== 'student'))
+    .map(field => `${field}: ${viewValue(page.path, field, params).replace(/_/g, ' ') || 'none'}`);
+  const suggestions: string[] = [];
+  if (page.path === '/attendance' && context.role === 'student') suggestions.push('Show subject attendance', 'Show daily attendance');
+  if (page.path === '/assignments' && context.role === 'student') suggestions.push('Show overdue assignments');
+  if (page.path === '/announcements') suggestions.push('Show unread announcements', 'Clear filters');
+  if (page.path === '/calendar') suggestions.push('Show sports events', 'Clear filters');
+  if (page.path === '/library') suggestions.push('Show issue history', 'Switch to catalogue');
+  if (page.path === '/timetable') suggestions.push('Show Monday timetable', 'Switch to weekly view');
+  if (page.path === '/examinations') suggestions.push('Show report card', 'Show exam schedule');
+  if (page.path === '/contacts') suggestions.push('Show support contacts', 'Clear filters');
+  if (!suggestions.length) suggestions.push('Open attendance', 'Open library');
+  suggestions.push('Help with this page');
+  return {
+    summary: `You are on ${page.label}.${selections.length ? ' Current view - ' + selections.join('; ') + '.' : ''}`,
+    suggestions,
+  };
+}
+
 export type PortalCommand = { reply: string; href?: string; back?: boolean; academicYear?: string };
 const normalize = (text: string) => text.toLowerCase().replace(/_/g, ' ').replace(/\s+/g, ' ').trim();
 const allowed = (page: Page, role: UserRole) => !page.staff || ['teacher', 'coordinator', 'principal'].includes(role);
@@ -118,6 +144,10 @@ export function resolvePortalCommand(message: string, context: Context): PortalC
     .replace(/[.!?]+$/, '');
   if (!original || original.length > 4000) return null;
   const text = normalize(original);
+  if (/^(help(?: with this page)?|what can i do here|what filters are selected|explain this page)$/.test(text)) {
+    const help = portalHelp(context);
+    return { reply: help.summary + '\nTry: ' + help.suggestions.filter(s => s !== 'Help with this page').join('; ') + '. These commands change the view only.' };
+  }
   if (/^(go )?back$|^previous page$/.test(text)) return { back: true, reply: 'Opening the previous portal view.' };
   if (/^(where am i|what page am i on)$/.test(text)) {
     return { reply: 'You are on ' + (ECHO_PAGES.find(p => p.path === context.path)?.label || 'the portal') + '.' };

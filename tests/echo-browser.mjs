@@ -101,7 +101,7 @@ try {
   console.log('Starting ECHO mock...');
   await new Promise(resolve => echo.listen(0, '127.0.0.1', resolve));
   const echoUrl = `http://127.0.0.1:${echo.address().port}`;
-  const env = { NODE_ENV: 'test', PORT: String(apiPort), ECHO_CHAT_ENABLED: 'true', ECHO_SITE_ID: 'productivity-portal', ECHO_API_URL: echoUrl };
+  const env = { NODE_ENV: 'test', PORT: String(apiPort), VERITAS_DATA_DIR: path.join(dataDirectory, 'data'), OPENAI_API_KEY: '', ECHO_SESSION_SECRET: randomBytes(32).toString('hex'), ECHO_CHAT_ENABLED: 'true', ECHO_SITE_ID: 'productivity-portal', ECHO_API_URL: echoUrl };
   console.log('Launching server and preview...');
   launch(['--import', pathToFileURL(path.join(root, 'node_modules/tsx/dist/loader.mjs')).href, path.join(root, 'server/index.ts')], dataDirectory, env);
   launch([path.join(root, 'node_modules/vite/bin/vite.js'), 'preview', '--host', '127.0.0.1', '--port', String(previewPort), '--strictPort'], root, { VERITAS_API_PROXY: apiOrigin });
@@ -110,6 +110,28 @@ try {
   await ready(portalOrigin + '/login');
   console.log('Servers ready. Demo accounts loaded:', demo.accounts.length);
   assert.equal((await fetch(apiOrigin + '/api/echo/config')).status, 401);
+  // Actual built-in help engine (no provider key): not the fake SSE service above.
+  const builtIn = apiOrigin + '/api/echo/v1/sites/productivity-portal';
+  async function builtInSession() {
+    return (await (await fetch(builtIn + '/sessions', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' })).json()).session_token;
+  }
+  async function builtInMessage(token, message) {
+    const response = await fetch(builtIn + '/messages', { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + token }, body: JSON.stringify({ message }) });
+    const raw = await response.text();
+    const text = response.ok ? raw.split('\n\n').filter(block => block.startsWith('event: delta\n'))
+      .map(block => JSON.parse(block.split('\ndata: ')[1]).text).join('') : raw;
+    return { status: response.status, text };
+  }
+  const builtA = await builtInSession();
+  const builtB = await builtInSession();
+  assert.notEqual(builtA, builtB);
+  assert.match((await builtInMessage(builtA, 'How do I apply for leave?')).text, /Leave Requests/);
+  assert.match((await builtInMessage(builtA, 'more')).text, /Following up/);
+  assert.doesNotMatch((await builtInMessage(builtB, 'more')).text, /Following up/);
+  await fetch(builtIn + '/sessions/current', { method: 'DELETE', headers: { Authorization: 'Bearer ' + builtA } });
+  assert.equal((await builtInMessage(builtA, 'hello')).status, 401);
+  assert.equal((await builtInMessage('invalid', 'hello')).status, 401);
+  console.log('PASS actual built-in help engine, follow-up isolation and reset revocation (no live provider)');
   const students = demo.accounts.filter(account => account.role === 'student');
   assert.ok(students.length >= 2);
   console.log('Launching browser...');
@@ -175,6 +197,8 @@ try {
   const beforePortalRequests = portalRequests.length;
   await send('Open library');
   await page.waitForURL('**/library');
+  assert.match(await widget.locator('.assistant').last().textContent(), /View confirmed/);
+  await widget.locator('.suggestions').getByRole('button', { name: 'Show issue history', exact: true }).waitFor();
   await send('Search books for physics');
   await page.waitForURL('**/library?**');
   await page.getByPlaceholder('Search catalogue by title, author, ISBN, or subject category...').waitFor();
@@ -206,6 +230,18 @@ try {
   await page.waitForURL('**/announcements');
   await send('Show unread announcements');
   assert.equal(await page.getByLabel('Read status filter').inputValue(), 'unread');
+  await send('What filters are selected?');
+  assert.match(await widget.locator('.assistant').last().textContent(), /read: unread/);
+  assert.equal(await page.getByLabel('Read status filter').inputValue(), 'unread');
+  await page.context().grantPermissions(['clipboard-read', 'clipboard-write'], { origin: portalOrigin });
+  await widget.locator('.assistant').last().getByRole('button', { name: 'Copy message' }).click();
+  await widget.locator('.status').filter({ hasText: 'Message copied.' }).waitFor();
+  assert.match(await page.evaluate(() => navigator.clipboard.readText()), /read: unread/);
+  // Clipboard failures are actionable and never reported as successful copies.
+  await page.evaluate(() => { window.originalClipboardWrite = navigator.clipboard.writeText.bind(navigator.clipboard); navigator.clipboard.writeText = async () => { throw new Error('denied'); }; });
+  await widget.locator('.assistant').last().getByRole('button', { name: 'Copy message' }).click();
+  await widget.locator('.status').filter({ hasText: 'Clipboard unavailable' }).waitFor();
+  await page.evaluate(() => { navigator.clipboard.writeText = window.originalClipboardWrite; });
   await send('Open timetable');
   await page.waitForURL('**/timetable');
   await send('Show Monday timetable');
@@ -222,11 +258,55 @@ try {
   assert.equal(traffic.length, beforeCommands, 'Read-only commands must not call the remote conversation service.');
   assert.ok(portalRequests.slice(beforePortalRequests).every(request => request.method() === 'GET'), 'View commands must not mutate school records.');
   assert.equal(await page.locator('echo-chat-widget').count(), 1);
+  await send('Switch academic year to 2025-2026');
+  assert.match(await widget.locator('.assistant').last().textContent(), /Selected academic year 2025-2026/);
+  // Force an observed URL mismatch to exercise honest failure feedback in-browser.
+  await page.evaluate(() => {
+    const original = history.pushState.bind(history);
+    window.restoreEchoPushState = () => { history.pushState = original; };
+    history.pushState = (state, unused, url) => original(state, unused, '/dashboard');
+  });
+  await send('Open library');
+  assert.match(await widget.locator('.assistant').last().textContent(), /could not confirm/);
+  await page.evaluate(() => window.restoreEchoPushState());
+  await send('Open timetable');
+  await page.waitForURL('**/timetable');
   await widget.locator('.close').click();
   await page.locator('a[href="/assignments"]').first().click();
   await page.waitForURL('**/assignments');
   assert.equal(await page.locator('echo-chat-widget').count(), 1);
   await widget.locator('.launcher').click();
+  // Stop aborts the stream and starts subsequent conversation on a new token.
+  await widget.locator('textarea').fill('slow reply');
+  await widget.locator('.send').click();
+  await widget.locator('.status').filter({ hasText: 'Replying' }).waitFor();
+  await widget.getByRole('button', { name: 'Stop', exact: true }).click();
+  await widget.locator('.status').filter({ hasText: 'Reply stopped.' }).waitFor();
+  assert.equal(await widget.locator('.send').isEnabled(), true);
+  await send('follow-up');
+  assert.match(await widget.locator('.assistant').last().textContent(), /none/);
+  await widget.getByRole('button', { name: 'New chat', exact: true }).click();
+  await widget.locator('.status').filter({ hasText: 'New conversation.' }).waitFor();
+  assert.equal(await widget.locator('.user').count(), 0);
+  await send('follow-up');
+  assert.match(await widget.locator('.assistant').last().textContent(), /none/);
+  // Recover from transport failure without replaying a message automatically.
+  await page.route('**/v1/sites/productivity-portal/messages', route => route.fulfill({ status: 503, json: { error: 'Test service unavailable.' } }));
+  await widget.locator('textarea').fill('test failure');
+  await widget.locator('.send').click();
+  await widget.locator('.status').filter({ hasText: 'Test service unavailable.' }).waitFor();
+  assert.equal(await widget.locator('.send').isEnabled(), true);
+  await page.unroute('**/v1/sites/productivity-portal/messages');
+  await send('Hello again');
+  // Suggestions remain usable and inside the viewport on mobile.
+  await page.setViewportSize({ width: 390, height: 844 });
+  const bounds = await widget.locator('.panel').boundingBox();
+  assert.ok(bounds.x >= 0 && bounds.x + bounds.width <= 390);
+  await widget.locator('.suggestions').getByRole('button', { name: 'Help with this page', exact: true }).click();
+  await widget.locator('.status').filter({ hasText: 'Ready.' }).waitFor();
+  mkdirSync('artifacts', { recursive: true });
+  await page.screenshot({ path: 'artifacts/echo-mobile.png' });
+  await page.setViewportSize({ width: 1280, height: 850 });
   await widget.locator('textarea').fill('slow reply');
   await widget.locator('.send').click();
   await widget.locator('.status').filter({ hasText: 'Replying' }).waitFor();
@@ -253,7 +333,7 @@ try {
   await page.reload();
   await disabledConfig;
   assert.equal(await page.locator('echo-chat-widget').count(), 0);
-  console.log('PASS portal login, authenticated config, chat/context, page/search/filter/tab/day/back commands without writes or model calls, logout abort, account isolation and credential separation');
+  console.log('PASS portal commands, verified feedback/failure, contextual help/suggestions, clipboard success/failure, stop/reset/error recovery, mobile, logout abort and account isolation; fake SSE transport, not provider evidence');
 } finally {
   if (browser) await browser.close();
   for (const child of children) if (child.exitCode === null) child.kill();

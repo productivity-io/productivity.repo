@@ -23,6 +23,7 @@
     .plain{border:0;background:transparent;color:#294652;padding:7px;border-radius:6px}.messages{flex:1;overflow:auto;padding:16px;min-height:80px;overscroll-behavior:contain}
     .bubble{white-space:pre-wrap;overflow-wrap:anywhere;margin:0 0 12px;padding:10px 13px;border-radius:12px;background:#eef4f6}.user{background:#e3f0f2;margin-left:30px}.assistant{margin-right:15px}
     .references{display:block;font-size:12px;color:#465f6b;margin-top:9px}.status{min-height:24px;font-size:12px;color:#475f6c;padding:0 16px 6px}
+    .suggestions{display:flex;flex-wrap:wrap;gap:4px;padding:0 12px 8px;max-height:100px;overflow:auto}.suggestions button,.copy{font-size:12px;border:1px solid #ccd9df;background:#fff;color:#294652;border-radius:6px;padding:4px 7px}.copy{display:block;margin-top:8px}.stop{border:1px solid #a7bec9;border-radius:8px;background:white;color:#294652;padding:10px}
     form{display:flex;align-items:end;gap:8px;padding:12px;border-top:1px solid #dce7eb}textarea{resize:none;flex:1;min-width:0;border:1px solid #a7bec9;border-radius:8px;padding:9px;color:#172832;background:#fff}
     .send{border:0;border-radius:8px;background:var(--accent);color:white;padding:10px 14px}.footer{font-size:11px;color:#566b75;padding:0 14px 9px}
     @media(max-width:440px){.panel{right:10px;left:10px;bottom:82px;width:auto;height:70dvh}.launcher{right:12px;bottom:14px}}
@@ -35,8 +36,9 @@
     <section class="panel" id="echo-panel" role="dialog" aria-label="Website assistant" hidden>
       <header><h2>Website assistant</h2><button class="plain reset" type="button">New chat</button><button class="plain close" type="button" aria-label="Close chat">✕</button></header>
       <div class="messages" role="log" aria-live="polite" aria-relevant="additions text"></div>
+      <div class="suggestions" role="group" aria-label="Page suggestions"></div>
       <div class="status" role="status"></div>
-      <form><textarea aria-label="Your message" placeholder="Ask a question…" maxlength="4000" rows="2" required></textarea><button class="send" type="submit">Send</button></form>
+      <form><textarea aria-label="Your message" placeholder="Ask a question…" maxlength="4000" rows="2" required></textarea><button class="stop" type="button" hidden>Stop</button><button class="send" type="submit">Send</button></form>
       <div class="footer">AI answers can be mistaken. Confirm important details with the business.</div>
     </section>`;
   shadow.append(surface);
@@ -49,6 +51,8 @@
   const input = shadow.querySelector("textarea");
   const send = shadow.querySelector(".send");
   const reset = shadow.querySelector(".reset");
+  const stop = shadow.querySelector(".stop");
+  const suggestions = shadow.querySelector(".suggestions");
   let token = null;
   let busy = false;
   let config = null;
@@ -70,16 +74,60 @@
     element.className = `bubble ${role}`;
     element.textContent = text;
     log.append(element);
+    if (role === "assistant" && text) addCopy(element);
     log.scrollTop = log.scrollHeight;
     return element;
   }
+  function addCopy(element) {
+    const text = element.textContent;
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = "copy";
+    button.textContent = "Copy";
+    button.setAttribute("aria-label", "Copy message");
+    button.addEventListener("click", async () => {
+      try {
+        await navigator.clipboard.writeText(text);
+        if (!destroyed) status.textContent = "Message copied.";
+      } catch { if (!destroyed) status.textContent = "Clipboard unavailable. Select the message text to copy it."; }
+    });
+    element.append(button);
+  }
+  function refreshContext() {
+    if (destroyed) return;
+    const detail = {};
+    host.dispatchEvent(new CustomEvent("echo-widget:context", { bubbles: true, detail }));
+    suggestions.replaceChildren();
+    for (const text of (detail.context?.suggestions || []).slice(0, 4)) {
+      if (typeof text !== "string" || text.length > 200) continue;
+      const button = document.createElement("button");
+      button.type = "button";
+      button.textContent = text;
+      button.disabled = busy || !config;
+      button.addEventListener("click", () => {
+        if (busy || !config) return;
+        input.value = text;
+        shadow.querySelector("form").requestSubmit();
+      });
+      suggestions.append(button);
+    }
+  }
+  host.addEventListener("echo-widget:refresh-context", refreshContext);
   function setBusy(value) {
     if (destroyed) return;
     busy = value;
     send.disabled = value || !config;
     input.disabled = value || !config;
     reset.disabled = value || !config;
+    stop.hidden = !value || !controller;
+    suggestions.querySelectorAll("button").forEach(button => { button.disabled = value || !config; });
   }
+  stop.addEventListener("click", () => {
+    // A remote service may commit a turn before the browser sees its final event.
+    // Discard its token so a stopped response cannot silently enter later context.
+    token = null;
+    controller?.abort();
+  });
   function close() {
     panel.hidden = true;
     launcher.setAttribute("aria-expanded", "false");
@@ -89,6 +137,7 @@
     if (!panel.hidden) return close();
     panel.hidden = false;
     launcher.setAttribute("aria-expanded", "true");
+    refreshContext();
     if (config) input.focus();
   });
   shadow.querySelector(".close").addEventListener("click", close);
@@ -139,22 +188,35 @@
     // Only trusted host-page code may handle a read-only website command.
     // Model replies remain plain text and never enter this hook.
     const command = { message };
-    host.dispatchEvent(new CustomEvent("echo-widget:command", { bubbles: true, detail: command }));
-    if (typeof command.reply === "string" && command.reply.length <= 4000) {
-      bubble("assistant", command.reply);
-      status.textContent = "Ready.";
-      setBusy(false);
-      input.focus();
+    status.textContent = "Checking portal command…";
+    try {
+      host.dispatchEvent(new CustomEvent("echo-widget:command", { bubbles: true, detail: command }));
+      const reply = command.replyPromise ? await command.replyPromise : command.reply;
+      if (destroyed) return;
+      if (typeof reply === "string" && reply.length <= 4000) {
+        bubble("assistant", reply);
+        status.textContent = "Ready.";
+        setBusy(false);
+        refreshContext();
+        input.focus();
+        return;
+      }
+    } catch {
+      if (!destroyed) { status.textContent = "The portal action could not be completed."; setBusy(false); }
       return;
     }
     const answer = bubble("assistant", "");
     status.textContent = "Thinking…";
     controller = new AbortController();
+    setBusy(true);
+    const timeout = setTimeout(() => controller?.abort(), 45000);
     let reader = null;
     try {
       if (!token) {
         const response = await request("/sessions", { method: "POST", headers: { "Content-Type": "application/json" }, body: "{}", signal: controller.signal });
-        token = (await response.json()).session_token;
+        const session = await response.json();
+        controller.signal.throwIfAborted();
+        token = session.session_token;
       }
       const response = await request("/messages", {
         method: "POST", headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
@@ -192,11 +254,14 @@
         }
       }
       if (!complete) throw new Error("Connection ended before the reply was complete.");
+      addCopy(answer);
       status.textContent = "Ready.";
     } catch (error) {
-      status.textContent = error.name === "AbortError" ? "Reply stopped." : error.message;
+      if (error.name === "AbortError") token = null;
+      status.textContent = error.name === "AbortError" ? "Reply stopped. The next message starts a fresh conversation." : error.message;
       if (!answer.textContent) answer.textContent = "This reply could not be completed. Please try again.";
     } finally {
+      clearTimeout(timeout);
       if (reader) { await reader.cancel().catch(() => {}); reader.releaseLock(); }
       controller = null;
       setBusy(false);
@@ -215,5 +280,6 @@
     if (/^#[0-9a-f]{6}$/i.test(value.branding.accent)) host.style.setProperty("--accent", value.branding.accent);
     bubble("assistant", value.branding.greeting);
     setBusy(false);
+    refreshContext();
   }).catch(error => { if (!destroyed) status.textContent = error.message; });
 })();
