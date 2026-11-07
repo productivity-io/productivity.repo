@@ -84,6 +84,13 @@ isolation. It also tests the actual built-in static help engine over HTTP with t
 check proves a live provider integration. Set `ECHO_BROWSER` if discovery needs help. Browser artifacts and
 temporary test-generated SQLite files are ignored; the harness terminates its services and removes its temp DB.
 
+Release verification is documented in `docs/RELEASE_VERIFICATION.md`. GitHub Actions now runs quality and
+session-security jobs. `node node_modules/tsx/dist/cli.mjs --test tests/echo-security.test.ts` checks production
+requirements against the actual built-in router and currently fails on documented baseline issues; do not skip
+it for merging. For an opt-in real-provider browser test, set `ECHO_SOURCE_ROOT` and approved backend environment
+configuration, then run `node tests/echo-provider-smoke.mjs`. `ECHO_USE_DESKTOP_SETTINGS=true` explicitly permits
+the Python fixture to read the existing encrypted ECHO provider settings locally; no key reaches the widget.
+
 Before launch, approve real help content, HTTPS/allowed origins, CSP script/connect/style requirements, service
 quotas, privacy notice, support ownership and the ECHO service's production gates. Test with the actual provider
 and supported client browsers. To roll back, set `ECHO_CHAT_ENABLED=false` and restart Express, then reload the

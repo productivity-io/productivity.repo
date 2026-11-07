@@ -1,12 +1,12 @@
 # ECHO to Veritas - Master Handoff
 
-Updated: 2026-11-07. Milestone: four selected features implemented and tested; local implementation commit recorded. No merge, push or deployment performed.
+Updated: 2026-11-07. Branch pushed, PR #2 open, quality CI PASS, real external-provider smoke PASS, security CI FAIL. Merge blocked. No deployment performed.
 
-## Objective and scope
+## Objective and authorized scope
 
-Improve the existing text assistant with four small additions: local contextual help/suggestions, verified action feedback, Stop response, and copy message. Preserve navigation, filters, ordinary conversation, session isolation, desktop and Android. No voice, school-record writes, merge or deployment.
+Four additions are implemented: local contextual help/suggestions, verified action feedback, Stop and copy. Preserve navigation, filters, ordinary text conversations and per-account widget lifetime. No voice, computer control or school-record writes. User subsequently authorized push, PR, review, CI/provider/security checks and merge only if every gate passes. Deployment and permission changes are not authorized.
 
-## Repositories and exact local paths
+## Repositories, local paths and commits
 
 - Source: https://github.com/echo-assistant-project/Echo
 - Source path: F:\Downloads\Echo-Web-Preparation
@@ -14,67 +14,67 @@ Improve the existing text assistant with four small additions: local contextual 
 - Source HEAD: dee9b7014f0c3e788570c85c4126820caa15d574
 - Target: https://github.com/productivity-io/productivity.repo
 - Target path: F:\Downloads\Veritas-Echo-Integration
-- Target branch: feature/echo-context-and-controls
-- Target baseline HEAD: 50f194969bc5042e6dfca3cd99460946c57a672d
-- Target implementation commit: 15f2410d54748d7c6cd0f7d41c9947f6d9aee245
-- Historical target main: 9c6e806692513342a1e7c30cfe7e2d85e7405826
+- Active target branch: feature/echo-context-and-controls
+- Current main baseline: 50f194969bc5042e6dfca3cd99460946c57a672d
+- Historical main: 9c6e806692513342a1e7c30cfe7e2d85e7405826
+- Feature implementation: 15f2410d54748d7c6cd0f7d41c9947f6d9aee245
+- Initial handoff: eb69a8274d6281898d69bdbf1b7c01e95f8eff65
+- CI/security/provider tests: 94b5231e7bcf142e5662182abec24a7e187e3d09
+- PR: https://github.com/productivity-io/productivity.repo/pull/2
 
-The subsequent documentation commit contains this handoff; obtain its exact hash with git log -1. The implementation commit above is the audited code revision, and no implementation changes follow it in this task.
+Documentation commits follow this audited code/test revision. Obtain the exact current documentation HEAD with git log -1. Working tree should be clean after the handoff commit/push. No merge or auto-merge performed.
 
-## Existing architecture and features
+## Existing architecture and reusable features
 
-Authenticated /api/echo/config selects a local shadow-DOM widget. EchoAssistant integrates the React router, year selector and read-only command registry. URL state drives existing page controls. The current remote adds a built-in TypeScript help engine at /api/echo/v1/sites, with optional server-side provider generation; external Python ECHO remains configurable. Model output is plain text and never executed as an action. Widget lifetime is tied to signed-in user ID; tokens/history are memory-only.
+Authenticated /api/echo/config selects the local shadow-DOM widget. EchoAssistant owns React router/year commands and account teardown. URL controls drive navigation, tabs, search and filters. Model replies are text and cannot execute actions. Existing typo tolerance, streaming, reset and logout cleanup were preserved.
 
-Source Python ECHO imports its existing headless Backend rather than the desktop orchestrator; its sessions bind site/origin/token and its references use client-local lexical retrieval. Desktop encrypted memories are not appropriate for this website and are not reused.
+Current main supports a built-in TypeScript public-help engine at /api/echo/v1/sites and configurable external ECHO. These are distinct engines. Python ECHO imports the existing headless backend with client-specific references, bounded history, streaming and site/origin/token sessions. Desktop encrypted memories, tools and device actions are excluded. These changes supply no private school records to either assistant.
 
-## Implementation, affected files and evidence
+## Selected additions and affected files
 
-All four selected additions are implemented. They were selected for high value, low complexity/risk and reuse of current registry, abort and text-rendering code. See FEATURE_CANDIDATES.md for scores, including deferred persistent memory/private summaries and excluded voice/device actions.
+FEATURE_CANDIDATES.md records ROI: four high-value, low-complexity/risk additions using the current registry, abort plumbing and text rendering. Persistent memory/private-record summaries deferred; voice and device actions excluded.
 
-- src/lib/echoCommands.ts: role-aware page suggestions and local help with validated current filters. No scraping, record reads or context sent to a provider.
-- src/lib/echoActionFeedback.ts: wait for observed state, with honest timeout/cancellation feedback.
-- src/components/EchoAssistant.tsx: instance-scoped context events, route/role refresh, async router/browser URL and academic-year confirmation. Existing account cleanup retained.
-- echo-web/widget/widget.js: suggestions, pending-command state, completed-message copy, clipboard denial feedback, Stop, 45-second request deadline and stopped-token discard.
-- tests/echo-commands.test.ts and tests/echo-browser.mjs: new regression coverage; existing commands retained.
-- echo-web/README.md and echo-web/docs/: current architecture, inventory, ROI, plan, log, pending work, PR summary, Markdown/PDF handoff and PDF regeneration script.
-
-Existing navigation, searches, filters, back navigation, attendance typo tolerance and ordinary conversation routing pass regression checks. New help and action handling make no extra model calls. Input remains busy during execution, preventing duplicate submits. Local history is not persisted.
+- src/lib/echoCommands.ts: role-aware page help/suggestions from validated local controls. No scraping, record reads or extra model calls.
+- src/lib/echoActionFeedback.ts: wait for observed state; explicit timeout/cancellation replies.
+- src/components/EchoAssistant.tsx: instance-scoped context events and route/role refresh; confirm router/browser URL or academic-year state before success.
+- echo-web/widget/widget.js: suggestions, pending-action status, completed-message copy, clipboard-denial feedback, Stop and 45-second request deadline. Stop discards remote context; next message starts fresh.
+- tests/echo-commands.test.ts and tests/echo-browser.mjs: regressions using temporary synthetic demo data.
+- .github/workflows/echo-checks.yml and tests/echo-security.test.ts: quality CI and genuine security release gates.
+- tests/echo-provider-smoke.mjs and tests/echo-live-fixture.py: opt-in real browser to real external ECHO/provider; no fake engine.
+- echo-web/README.md and echo-web/docs/: inventory, ROI, plan/log, pending work, release evidence, PR summary, Markdown/PDF handoff, PDF generator and binary PDF attributes.
 
 ## Test results and commands
 
-- PASS: node node_modules/tsx/dist/cli.mjs --test tests/echo-config.test.ts tests/echo-commands.test.ts (66/66).
-- PASS: node node_modules/typescript/bin/tsc --noEmit.
-- PASS: node node_modules/vite/bin/vite.js build (2043 modules).
-- PASS: node --check echo-web/widget/widget.js and git diff --check.
-- PASS: node tests/echo-browser.mjs with installed Chrome. Actual Express authentication and temporary synthetic demo DB; external ECHO HTTP/SSE is fake transport. Covered attendance/typos, filter controls, contextual help/suggestions, action success and forced URL mismatch, year change, copy success and denial, Stop/fresh follow-up, reset, HTTP 503 recovery, 390px viewport, logout abort, second-account isolation and no portal tokens/cookies sent to the external service. Read-only commands trigger GET-only portal requests.
-- PASS: same harness checks actual built-in static-help HTTP responses, follow-up session isolation, invalid tokens and reset revocation with OPENAI_API_KEY disabled. This proves the built-in help engine, not a live model/provider.
-- PASS: python -m unittest discover -s tests -p test_backend.py from F:\Downloads\Echo-Web-Preparation\desktop\EchoDesktop (7/7). Initial invocation from repository root failed imports; corrected working directory resolved it without code edits.
-- PASS: mobile screenshot reviewed; PDF generated with ReportLab, rendered with Poppler and checked for copyable text. Final render reviewed before delivery.
+PASS: 66 tests via node node_modules/tsx/dist/cli.mjs --test tests/echo-config.test.ts tests/echo-commands.test.ts. PASS: TypeScript, build, widget syntax and browser regression on GitHub Linux. Browser regression uses actual portal authentication and fake external SSE, not provider evidence. Covered attendance/typos, page/tab/search/filter/day/back, preserved controls, help/suggestions, action success/forced mismatch, year selector, clipboard success/denial, Stop/reset/503 recovery, 390px mobile viewport, logout abort and second-account isolation. View commands made GET-only portal requests; portal credentials were not sent externally.
 
-Development browser failures (SSE assertion splitting and stale Ready status) were corrected. No final failing checks remain. Real provider round-trip, physical-device and other-browser tests were not performed. No credentials were added, no dependencies installed, and no real school records were used or modified.
+Source headless tests PASS 7/7: from desktop/EchoDesktop run python -m unittest discover -s tests -p test_backend.py. Source code unchanged. An initial root invocation failed imports and was corrected without source edits.
 
-## Known blockers and pending Git state
+Real-provider PASS: user approved existing FreeLLMAPI configuration. Encrypted source settings select the compatible loopback gateway at port 31415. Source live_smoke.py passed two actual turns with four history messages. Target provider-smoke passed actual Veritas browser -> actual Python ECHO -> configured gateway: two HTTP 200 turns, ten deltas each, synthetic code recalled, then verified attendance navigation. Durations: 997ms/283ms. No mock replies, private records or keys/responses printed. Only Python backend read the key; never sent to OpenAI/browser/GitHub. This does not verify the built-in OpenAI-only path, upstream gateway internals or HTTPS deployment.
 
-Source has pre-existing uncommitted changes: README.md, docs/CODEX_HANDOFF.md, echo-web/README.md, backend/server.py, docs/ARCHITECTURE.md, docs/MIGRATION.md, docs/VALIDATION.md, tests/browser-check.mjs, tests/test_web.py, widget/widget.js; untracked echo-web/tests/live_smoke.py. Do not stage, overwrite or reset them.
+Reproduce from target: set ECHO_SOURCE_ROOT=F:\Downloads\Echo-Web-Preparation and ECHO_USE_DESKTOP_SETTINGS=true in the process, then node tests/echo-provider-smoke.mjs. Alternatively supply approved ECHO_MODEL_BASE_URL and ECHO_MODEL_API_KEY in backend environment. No secret command arguments. Fixtures stop services/remove temp DBs. Parallel local TypeScript/provider attempts exhausted memory; provider rerun sequentially with Node 22 bounded heaps passed. OOM is not TypeScript success; fresh CI provides that pass.
 
-Target implementation is committed on the feature branch; the documentation is saved in a separate local commit after it. Run git status --short --branch for authoritative current state; the expected final working tree is clean. Branch has not been pushed. PR_SUMMARY.md is ready for review, but no PR was created. No merge/deployment authorized or performed.
+CI: https://github.com/productivity-io/productivity.repo/actions/runs/42366552606. Quality job 128385718936 PASS (including TypeScript/build/browser); security job 128385718831 FAIL. Documentation follow-ups rerun CI; inspect exact final head/checks before merge.
 
-Existing production gates include fallback session signing secret, permissive CORS/public session issuance, unbounded process-local state and multi-instance revocation/history behavior. Session-token separation is not account-bound authentication. No private knowledge should be connected without separate authenticated design. Real provider configuration has not been verified. This task adds no school-data access and does not change permissions.
+## Blocking security findings and limits
 
-Action confirmation verifies route/query/year state, not lazy page loading or database changes. Stop aborts the browser request and discards its token; next message starts a new remote conversation, while visible messages remain. An abandoned remote session expires there; provider cancellation/billing is not guaranteed. Refresh intentionally loses in-memory conversation. A physical mobile device was not tested.
+Run node node_modules/tsx/dist/cli.mjs --test tests/echo-security.test.ts. Actual built-in router, ephemeral loopback, no DB/provider: 3 PASS / 6 FAIL. Failures: anonymous session issuance (201); unapproved origins accepted/reflected (200); usable public-default-secret forgery (200); malformed signed expiry (200); ignored token suffix (200); unsupported tools field accepted/ignored (200, not executed). Invalid signatures, expired tokens and same-process reset revocation PASS. Exact file/line evidence: RELEASE_VERIFICATION.md.
 
-## Handoff locations
+Pre-existing static findings: unbounded process-local stores, no account-bound session/logout invalidation, no rate/capacity limits, no durable multi-instance revocation. No real school data tested/exposed. No permissions changed. Agree on authenticated session/hosting design before remediation; do not weaken tests to green the PR. Security failures prohibit merge now.
 
-Primary Markdown: F:\Downloads\Veritas-Echo-Integration\echo-web\docs\ECHO-WEB-MASTER-HANDOFF.md
+Action confirmation covers view state, not lazy-page data readiness. Stop cannot guarantee billing cancellation/immediate remote deletion; abandoned sessions expire. Tokens/transcript remain memory-only. Physical mobile devices/other browsers remain release coverage. Built-in provider errors can fall back to static help: Ready alone is not provider proof.
 
-Primary PDF: F:\Downloads\Veritas-Echo-Integration\echo-web\docs\ECHO-WEB-MASTER-HANDOFF.pdf
+## Git state, pending work and exact handoff paths
 
-Secondary copies: F:\ECHO-Handoff\ECHO-WEB-MASTER-HANDOFF.md and F:\ECHO-Handoff\ECHO-WEB-MASTER-HANDOFF.pdf. Regenerate PDF with the bundled Python and echo-web/docs/render_handoff.py, then refresh secondary copies when updating.
+Source pre-existing modified: README.md, docs/CODEX_HANDOFF.md, echo-web/README.md, backend/server.py, docs/ARCHITECTURE.md, docs/MIGRATION.md, docs/VALIDATION.md, tests/browser-check.mjs, tests/test_web.py, widget/widget.js. Untracked: echo-web/tests/live_smoke.py. Do not stage/overwrite/reset. Desktop/Android untouched.
 
-## Resume instructions and test commands
+Target pushed, PR open. Remaining: approved security/session design and remediation, rerun all checks on exact final head, then merge only when every gate passes. No force-push, bypass or public deployment. No auto-merge enabled.
 
-Read AGENTS.md where applicable, then git status, git log -1, git remote -v and git worktree list in both repositories. Read the planning documents before changing code. In target run npm run test:echo, node node_modules/typescript/bin/tsc --noEmit, npm run build and npm run test:echo:browser. Browser fixture uses a disposable demo database and fake ECHO transport. Keep all real school records untouched. Update this file and its PDF after meaningful milestones.
+Markdown: F:\Downloads\Veritas-Echo-Integration\echo-web\docs\ECHO-WEB-MASTER-HANDOFF.md
+
+PDF: F:\Downloads\Veritas-Echo-Integration\echo-web\docs\ECHO-WEB-MASTER-HANDOFF.pdf
+
+Backups: F:\ECHO-Handoff\ECHO-WEB-MASTER-HANDOFF.md and F:\ECHO-Handoff\ECHO-WEB-MASTER-HANDOFF.pdf. Regenerate using bundled Python with echo-web/docs/render_handoff.py; render/review and verify copyable text, then refresh backups.
 
 ## Ready-to-copy continuation prompt
 
-Continue ECHO/Veritas in F:\Downloads\Veritas-Echo-Integration on feature/echo-context-and-controls. Read echo-web/docs/ECHO-WEB-MASTER-HANDOFF.md and all planning files first. Inspect git status, branch, log, remotes and worktrees before edits; implementation commit is 15f2410d54748d7c6cd0f7d41c9947f6d9aee245, based on 50f194969bc5042e6dfca3cd99460946c57a672d. All four selected features are implemented and tested; do not recreate them. PR_SUMMARY.md describes completed scope. No push/PR/merge/deployment has occurred. Source ECHO at F:\Downloads\Echo-Web-Preparation has pre-existing dirty changes and must be preserved. Next prioritize review and only separately authorized release work: existing backend session/security/hosting gates and a real configured provider test. Never treat fake SSE or static guidance as provider evidence. Preserve ordinary AI routing, permissions, filters, account isolation and logout/reset. Do not add voice, computer control, private-record access or writes. Any additional code changes require relevant command, TypeScript, build and browser regression checks with a disposable demo database. Keep the Markdown/PDF handoff and F:\ECHO-Handoff copies current. Do not merge, deploy, delete data or change permissions without explicit approval.
+Continue ECHO/Veritas at F:\Downloads\Veritas-Echo-Integration on feature/echo-context-and-controls, PR https://github.com/productivity-io/productivity.repo/pull/2. Read this handoff, RELEASE_VERIFICATION.md, PENDING_WORK.md and PR checks first. Inspect branches/status/log/remotes/worktrees. Four widget features are complete; quality CI and real external-provider smoke PASS. Security CI FAILS six documented requirements: do not merge. Source ECHO at F:\Downloads\Echo-Web-Preparation has unrelated dirty work; preserve it. Agree on account-bound session/origin/secret/rate-limit/hosting design before changing permissions. Fix requirements without weakening tests. Preserve commands, filters, text conversations, logout/isolation and public-data boundaries. No voice, computer control or school-record writes. Existing FreeLLMAPI-configured gateway is approved for tests; keys backend-only. Static/fake replies are not provider evidence. Verify command tests, TypeScript, build, browser and security CI on exact final head. Update both handoff formats/backups. Merge authorized only when every check passes; deployment not authorized.

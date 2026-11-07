@@ -27,3 +27,13 @@
 - During browser development, corrected an SSE test assertion to reconstruct deltas, and fixed stale Ready status during async local verification. Final suite passes.
 - Visual review: mobile screenshot fits 390px viewport. Initial PDF rendered/readable and contains copyable text; final PDF regeneration/review follows commit recording.
 - Implementation commit: `15f2410d54748d7c6cd0f7d41c9947f6d9aee245` (`feat(echo): add contextual help and verified response controls`). Local only; no push, PR, merge or deployment.
+
+## Subsequent user-authorized release verification
+
+- Prior local-only status above is historical. Pushed feature branch; opened PR #2 against main: https://github.com/productivity-io/productivity.repo/pull/2. Connector create returned 403; existing Git authentication successfully created the PR via GitHub API. No secrets printed.
+- Added CI and real security/provider checks in `94b5231e7bcf142e5662182abec24a7e187e3d09`; pushed. Original PR head had no workflow/checks.
+- User approved existing FreeLLMAPI configuration. Source real-provider smoke PASS (two real turns; 4 history messages), and target real browser -> source ECHO -> configured gateway smoke PASS (two HTTP 200 turns with synthetic context recall, followed by verified attendance typo navigation). No mock replies, private records or provider key forwarding to browser/OpenAI.
+- Security audit FAIL: 3/9 pass, 6/9 fail. Reproduced anonymous sessions, reflected unapproved origins, default-secret forgery, malformed expiry, ignored token suffix, and ignored unsupported fields on loopback only. Existing invalid-signature/expiry rejection and same-process revocation pass.
+- Full evidence, code review and precise boundaries: RELEASE_VERIFICATION.md. No authentication/permission changes, merge or deployment performed. Failures intentionally remain blocking.
+- Parallel local TypeScript/provider test attempts ran out of system memory; provider rerun sequentially with Node 22 bounded heaps PASS. Do not count failed OOM run as a TypeScript pass; current CI provides fresh quality verification.
+- GitHub PR CI run 42366552606: quality job 128385718936 PASS (TypeScript, build, full browser regression); session-security job 128385718831 FAIL. Independently reproduced on Linux. PR remains open; no auto-merge enabled.

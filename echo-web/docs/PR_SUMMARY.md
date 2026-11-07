@@ -6,4 +6,6 @@ Reuses the existing command registry, role checks, widget lifecycle and backend 
 
 Validation: 66 command/config tests; TypeScript; production build; Chrome browser regression with a disposable DB (attendance typo/navigation, filters, help/suggestions, action success/failure, copy success/denial, Stop/reset, error recovery, mobile viewport, logout and account isolation); real built-in static help HTTP session/reset checks; 7 source headless-backend tests; widget syntax and diff whitespace. External SSE is a fixture, not live provider verification.
 
-Limits: confirmation covers view state, not data-loading success. Stop resets remote conversation context and cannot guarantee provider cancellation/billing. Existing built-in session/hosting hardening and real provider checks remain documented production gates. Do not merge or deploy as part of this task.
+Release verification: branch pushed, PR #2 open. Actual external ECHO/provider browser smoke passed using the user-approved existing gateway. Quality CI passed; security CI failed six baseline requirements. See RELEASE_VERIFICATION.md. Merge is authorized only after every check passes; currently blocked. Deployment is not authorized.
+
+Limits: confirmation covers view state, not data-loading success. Stop cannot guarantee provider cancellation/billing. Built-in session/hosting requirements need remediation before merge. Built-in OpenAI-only provider path remains distinct from the verified external mode.
