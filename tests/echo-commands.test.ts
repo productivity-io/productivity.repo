@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { ECHO_PAGES, resolvePortalCommand, viewValue } from '../src/lib/echoCommands.ts';
+import { ECHO_PAGES, resolvePortalCommand, viewValue, portalHelp } from '../src/lib/echoCommands.ts';
+import { confirmPortalAction } from '../src/lib/echoActionFeedback.ts';
 
 const context = { path: '/dashboard', search: '', role: 'student' as const, academicYears: ['2026-2027', '2025-2026'] };
 for (const page of ECHO_PAGES) {
@@ -122,4 +123,39 @@ test('invalid query values cannot select unsupported controls', () => {
   assert.equal(viewValue('/timetable', 'day', new URLSearchParams('echo_day=Sunday')), 'Thursday');
   assert.equal(viewValue('/library', 'search', new URLSearchParams({ echo_search: 'x'.repeat(201) })), '');
   assert.throws(() => viewValue('/settings', 'shell', new URLSearchParams()));
+});
+
+test('context help describes validated current filters and stays local', () => {
+  const ctx = { ...context, path: '/announcements', search: '?echo_read=unread&echo_category=invalid&secret=do-not-read' };
+  const help = portalHelp(ctx);
+  assert.match(help.summary, /Announcements.*category: all.*read: unread/);
+  assert.equal(help.summary.includes('do-not-read'), false);
+  assert.ok(help.suggestions.includes('Show unread announcements'));
+  assert.match(resolvePortalCommand('What filters are selected?', ctx)!.reply, /read: unread/);
+  assert.equal(resolvePortalCommand('Help with this page', ctx)?.href, undefined);
+});
+
+test('suggestions resolve locally and honor student/staff controls', () => {
+  for (const role of ['student', 'teacher', 'coordinator', 'principal'] as const) {
+    for (const page of ECHO_PAGES) {
+      const ctx = { ...context, role, path: page.path };
+      const help = portalHelp(ctx);
+      for (const text of help.suggestions) assert.ok(resolvePortalCommand(text, ctx), `${role} ${page.path}: ${text}`);
+      if (role !== 'student' && page.path === '/attendance') {
+        assert.equal(help.summary.includes('tab:'), false);
+        assert.equal(help.suggestions.includes('Show subject attendance'), false);
+      }
+      if (role === 'student' && page.staff) assert.equal(help.summary.includes(page.label), false);
+    }
+  }
+});
+
+test('confirmation waits for observed state and fails honestly on timeout/cancel', async () => {
+  let matched = false;
+  setTimeout(() => { matched = true; }, 10);
+  assert.equal(await confirmPortalAction(() => matched, 'Confirmed', new AbortController().signal), 'Confirmed');
+  assert.match(await confirmPortalAction(() => false, 'False success', new AbortController().signal, 0), /could not confirm/);
+  const controller = new AbortController();
+  controller.abort();
+  assert.match(await confirmPortalAction(() => true, 'False success', controller.signal), /cancelled/);
 });
