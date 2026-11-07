@@ -1,0 +1,47 @@
+name: ECHO checks
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [feature/echo-context-and-controls]
+permissions:
+  contents: read
+concurrency:
+  group: echo-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  quality:
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - run: npm ci
+      - run: npm run test:echo
+      - run: node node_modules/typescript/bin/tsc --noEmit
+      - run: node --check echo-web/widget/widget.js
+      - run: npm run build
+      - run: npm run test:echo:browser
+        env:
+          ECHO_BROWSER: /usr/bin/google-chrome
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: echo-browser-artifacts
+          path: artifacts/
+          if-no-files-found: ignore
+  session-security:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - run: npm ci
+      - name: Verify session and security release requirements
+        run: node node_modules/tsx/dist/cli.mjs --test tests/echo-security.test.ts
