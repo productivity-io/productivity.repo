@@ -75,7 +75,13 @@ export function StudentsStaffPage() {
       setEnrollOpen(false);
       setStuName('');
       setStuEmail('');
-      showToast('Student Enrolled', `Assigned ID: ${res.schoolId} (Default password: password123)`, 'success');
+      showToast(
+        'Student Enrolled',
+        res.temporaryPassword
+          ? `Assigned ID: ${res.schoolId}. Temporary password: ${res.temporaryPassword}`
+          : `Assigned ID: ${res.schoolId} (Default password: password123)`,
+        'success'
+      );
       loadDirectory();
     } catch (err: any) {
       showToast('Enrollment failed', err.message, 'error');
@@ -120,11 +126,17 @@ export function StudentsStaffPage() {
 
   const handleResetPassword = async (userId: number, name: string) => {
     try {
-      await apiFetch(`/api/admin/users/${userId}/status`, {
+      const res = await apiFetch(`/api/admin/users/${userId}/status`, {
         method: 'PATCH',
         body: JSON.stringify({ resetPassword: 'password123' }),
       });
-      showToast('Password Reset', `Reset ${name}’s password to "password123".`, 'success');
+      showToast(
+        'Password Reset',
+        res.temporaryPassword
+          ? `New temporary password for ${name}: ${res.temporaryPassword}`
+          : `Reset ${name}’s password to "password123".`,
+        'success'
+      );
     } catch (err: any) {
       showToast('Reset failed', err.message, 'error');
     }

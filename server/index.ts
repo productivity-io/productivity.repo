@@ -1,5 +1,5 @@
 import express, { Request, Response, NextFunction } from 'express';
-import cors from 'cors';
+import crypto from 'node:crypto';
 import cookieParser from 'cookie-parser';
 import multer from 'multer';
 import path from 'node:path';
@@ -8,7 +8,9 @@ import { eq, desc, and } from 'drizzle-orm';
 import { db } from './db/index.js';
 import * as schema from './db/schema.js';
 import { seedDatabase } from './db/seed.js';
-import { createSessionToken, verifySessionToken, verifyPassword, hashPassword, SessionPayload } from './utils/auth.js';
+import { assertSessionSecretConfigured, createSessionToken, verifySessionToken, verifyPassword, hashPassword, SessionPayload } from './utils/auth.js';
+import { isAllowedPortalOrigin, normalizeHttpOrigin } from './utils/originPolicy.js';
+import { isProductionPortal } from './utils/portalMode.js';
 import { fileStorage } from './services/fileStorage.js';
 import { schoolService } from './services/schoolService.js';
 import { resolvePortalEchoConfig, createEchoServiceRouter } from './services/echo.js';
@@ -18,7 +20,31 @@ const app = express();
 const PORT = Number(process.env.PORT) || 3001;
 const isServerless = Boolean(process.env.VERCEL || process.env.AWS_LAMBDA_FUNCTION_NAME);
 
-app.use(cors({ origin: true, credentials: true }));
+assertSessionSecretConfigured();
+app.disable('x-powered-by');
+
+// Explicit origin allowlist. Reflecting arbitrary origins with credentials would let any site
+// drive a signed-in user's portal session. Non-browser clients may omit Origin; auth still applies.
+app.use((req: Request, res: Response, next: NextFunction) => {
+  const origin = req.headers.origin;
+  if (origin && !isAllowedPortalOrigin(origin, req.headers.host)) {
+    res.status(403).json({ error: 'Origin is not allowed for this portal.' });
+    return;
+  }
+  const allowedOrigin = origin ? normalizeHttpOrigin(origin) : null;
+  if (allowedOrigin) {
+    res.setHeader('Access-Control-Allow-Origin', allowedOrigin);
+    res.setHeader('Access-Control-Allow-Credentials', 'true');
+    res.setHeader('Access-Control-Allow-Headers', 'Authorization, Content-Type');
+    res.setHeader('Access-Control-Allow-Methods', 'GET, HEAD, POST, PUT, PATCH, DELETE, OPTIONS');
+    res.setHeader('Vary', 'Origin');
+  }
+  if (req.method === 'OPTIONS') {
+    res.status(204).end();
+    return;
+  }
+  next();
+});
 app.use(express.json({ limit: '4mb' }));
 app.use(cookieParser());
 
@@ -136,6 +162,10 @@ app.get('/api/echo/provider', requireAuth, async (_req: Request, res: Response) 
 });
 
 app.get('/api/auth/demo-accounts', (_req: Request, res: Response) => {
+  if (isProductionPortal()) {
+    res.status(404).json({ error: 'Not found.' });
+    return;
+  }
   const allUsers = db.select().from(schema.users).all();
   const demoList = allUsers.map(u => ({
     id: u.id,
@@ -218,6 +248,13 @@ app.post('/api/auth/forgot-password', (req: Request, res: Response) => {
     res.status(400).json({ error: 'Please provide your School ID or registered email.' });
     return;
   }
+  if (isProductionPortal()) {
+    res.json({
+      success: true,
+      message: 'If an account matches, contact the Principal’s Office to have its password reset securely.',
+    });
+    return;
+  }
   const cleanId = String(identifier).trim().toLowerCase();
   const allUsers = db.select().from(schema.users).all();
   const matched = allUsers.find(
@@ -238,8 +275,9 @@ app.post('/api/auth/forgot-password', (req: Request, res: Response) => {
 app.post('/api/auth/change-password', requireAuth, (req: Request, res: Response) => {
   const { currentPassword, newPassword } = req.body;
   const user = req.currentUser!;
-  if (!currentPassword || !newPassword || String(newPassword).length < 6) {
-    res.status(400).json({ error: 'New password must be at least 6 characters long.' });
+  const minimumPasswordLength = isProductionPortal() ? 12 : 6;
+  if (!currentPassword || !newPassword || String(newPassword).length < minimumPasswordLength) {
+    res.status(400).json({ error: `New password must be at least ${minimumPasswordLength} characters long.` });
     return;
   }
   if (!verifyPassword(String(currentPassword), user.passwordHash)) {
@@ -2466,12 +2504,15 @@ app.post('/api/admin/students', requireAuth, requireRoles('principal', 'coordina
   const admissionNo = `ADM-2026-${100 + countStu}`;
   const username = String(fullName).toLowerCase().replace(/[^a-z0-9]/g, '') + countStu;
   const now = new Date().toISOString();
+  const temporaryPassword = isProductionPortal()
+    ? crypto.randomBytes(18).toString('base64url')
+    : 'password123';
 
   const userRes = db.insert(schema.users).values({
     schoolId,
     username,
     email: String(email),
-    passwordHash: hashPassword('password123'),
+    passwordHash: hashPassword(temporaryPassword),
     role: 'student',
     fullName: String(fullName),
     phone: String(phone || '+1 (555) 300-0000'),
@@ -2499,7 +2540,11 @@ app.post('/api/admin/students', requireAuth, requireRoles('principal', 'coordina
   }).run();
 
   schoolService.logAudit(actor, 'CREATE_STUDENT', 'student', schoolId, `Enrolled student ${fullName} (${schoolId}).`);
-  res.json({ success: true, schoolId });
+  res.json({
+    success: true,
+    schoolId,
+    ...(isProductionPortal() ? { temporaryPassword } : {}),
+  });
 });
 
 app.patch('/api/admin/students/:id', requireAuth, requireRoles('principal', 'coordinator'), (req: Request, res: Response) => {
@@ -2545,12 +2590,15 @@ app.post('/api/admin/staff', requireAuth, requireRoles('principal'), (req: Reque
   const schoolId = `${prefix}-2026-${100 + idx}`;
   const username = String(fullName).toLowerCase().replace(/[^a-z0-9]/g, '') + idx;
   const now = new Date().toISOString();
+  const temporaryPassword = isProductionPortal()
+    ? crypto.randomBytes(18).toString('base64url')
+    : 'password123';
 
   const userRes = db.insert(schema.users).values({
     schoolId,
     username,
     email: String(email),
-    passwordHash: hashPassword('password123'),
+    passwordHash: hashPassword(temporaryPassword),
     role: role === 'coordinator' ? 'coordinator' : 'teacher',
     fullName: String(fullName),
     phone: String(phone || '+1 (555) 201-0199'),
@@ -2582,7 +2630,11 @@ app.post('/api/admin/staff', requireAuth, requireRoles('principal'), (req: Reque
   }
 
   schoolService.logAudit(actor, 'CREATE_STAFF', 'user', schoolId, `Added ${role} ${fullName} (${schoolId}).`);
-  res.json({ success: true, schoolId });
+  res.json({
+    success: true,
+    schoolId,
+    ...(isProductionPortal() ? { temporaryPassword } : {}),
+  });
 });
 
 app.patch('/api/admin/users/:userId/status', requireAuth, requireRoles('principal'), (req: Request, res: Response) => {
@@ -2595,15 +2647,21 @@ app.patch('/api/admin/users/:userId/status', requireAuth, requireRoles('principa
     schoolService.logAudit(actor, isActive ? 'ACTIVATE_USER' : 'DEACTIVATE_USER', 'user', targetUserId, `Changed active status of user #${targetUserId} to ${isActive}.`);
   }
 
+  let temporaryPassword: string | undefined;
   if (resetPassword) {
+    // Never accept a caller-supplied demo password in production. Generate a one-time value
+    // and return it only to the authenticated principal performing the reset.
+    temporaryPassword = isProductionPortal()
+      ? crypto.randomBytes(18).toString('base64url')
+      : String(resetPassword);
     db.update(schema.users)
-      .set({ passwordHash: hashPassword(String(resetPassword)) })
+      .set({ passwordHash: hashPassword(temporaryPassword) })
       .where(eq(schema.users.id, targetUserId))
       .run();
     schoolService.logAudit(actor, 'RESET_USER_PASSWORD', 'user', targetUserId, `Reset password for user #${targetUserId}.`);
   }
 
-  res.json({ success: true });
+  res.json({ success: true, ...(temporaryPassword && isProductionPortal() ? { temporaryPassword } : {}) });
 });
 
 app.post('/api/admin/subjects', requireAuth, requireRoles('principal', 'coordinator'), (req: Request, res: Response) => {

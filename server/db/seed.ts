@@ -1,6 +1,8 @@
+import crypto from 'node:crypto';
 import { db, initializeDatabaseTables, sqlite } from './index.js';
 import * as schema from './schema.js';
 import { hashPassword } from '../utils/auth.js';
+import { isProductionPortal } from '../utils/portalMode.js';
 import { count } from 'drizzle-orm';
 
 export function seedDatabase(force = false) {
@@ -29,8 +31,19 @@ export function seedDatabase(force = false) {
     }
   }
 
+  const production = isProductionPortal();
+  const bootstrapPassword = (process.env.PORTAL_BOOTSTRAP_PASSWORD || '').trim();
+  if (production && Buffer.byteLength(bootstrapPassword, 'utf8') < 16) {
+    throw new Error('PORTAL_BOOTSTRAP_PASSWORD must contain at least 16 characters in production.');
+  }
+
   const now = new Date().toISOString();
-  const defaultPassword = hashPassword('password123');
+  // Production seeds unusable random hashes for sample accounts. Only the bootstrap principal
+  // can sign in, using the operator-provided secret; demo credentials remain development-only.
+  const defaultPassword = hashPassword(
+    production ? crypto.randomBytes(32).toString('base64url') : 'password123'
+  );
+  const principalPassword = production ? hashPassword(bootstrapPassword) : defaultPassword;
 
   // 1. Academic Years
   db.insert(schema.academicYears).values([
@@ -46,7 +59,7 @@ export function seedDatabase(force = false) {
       schoolId: 'PRN-2026-001',
       username: 'principal',
       email: 'principal@veritas.edu',
-      passwordHash: defaultPassword,
+      passwordHash: principalPassword,
       role: 'principal',
       fullName: 'Dr. Eleanor Vance',
       phone: '+1 (555) 201-0001',

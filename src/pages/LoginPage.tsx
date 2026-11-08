@@ -299,13 +299,16 @@ export function LoginPage() {
           <div className="mt-6 pt-5 border-t border-slate-100 flex items-center gap-2 text-xs text-slate-500">
             <ShieldCheck className="w-4 h-4 text-blue-700 shrink-0" />
             <span>
-              Local Development Mode — Scrypt hashed credentials & role-based access control enabled.
+              {import.meta.env.DEV
+                ? 'Local Development Mode — Scrypt hashed credentials & role-based access control enabled.'
+                : 'Secure sign-in — scrypt-hashed credentials and role-based access control.'}
             </span>
           </div>
         </div>
       </div>
 
-      {/* Right Column: Interactive Seeded Demo Accounts Panel */}
+      {/* Demo accounts are development-only; the production API returns 404. */}
+      {demoAccounts.length > 0 && (
       <div className="flex-1 bg-slate-900 text-white p-6 sm:p-12 lg:p-16 flex flex-col justify-center">
         <div className="w-full max-w-xl mx-auto">
           <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-blue-500/15 border border-blue-400/30 text-blue-300 text-xs font-semibold mb-4">
@@ -393,8 +396,9 @@ export function LoginPage() {
           )}
         </div>
       </div>
+      )}
 
-      {/* Forgot Password Local Demo Modal */}
+      {/* Forgot Password Modal */}
       {forgotOpen && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
           <div className="fixed inset-0 bg-slate-900/50 backdrop-blur-xs" onClick={() => setForgotOpen(false)} />
