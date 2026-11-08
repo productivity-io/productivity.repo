@@ -103,6 +103,16 @@ verify `/api/echo/provider` reports `configured: true` and `reachable: true`, an
 that a model-only prompt returns provider metadata. If the gateway is only on
 the PC, an HTTPS tunnel is required; no tunnel is configured by this repository.
 
+### Deployment gap after push
+
+Commits `b75442f` and `a2f5f09` were pushed to `origin/main`. Vercel did not
+publish them: three minutes later the site still served the old `index` asset
+and `GET /api/echo/provider` returned 404 (the new route requires auth and would
+return 401/200). GitHub reported no deployment or commit status for the new SHA,
+and this workspace has no `.vercel` project link or deploy hook. A manual
+Vercel publish or Git-integration reconnect is required; automatic deployment
+was not observed and is not claimed.
+
 ## Residual risks
 
 - History and revocation are process-local; serverless instances do not share

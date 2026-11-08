@@ -140,11 +140,15 @@ Residual, pre-existing or architectural:
 
 ## Git and publication state
 
-Implementation commit: `b75442f45a37087dd1c5b904b3d5e2646cac532d` on local
-`main`, based on `f817306`. This documentation follow-up records that hash and
-refreshes the PDF. Do not force-push. Remote `origin/main` and the Vercel
-deployment must be re-checked after pushing; the previous deployment was still
-the old build without a provider.
+Implementation commit: `b75442f45a37087dd1c5b904b3d5e2646cac532d`, pushed to
+`origin/main` with documentation commit `a2f5f09` (based on `f817306`).
+
+Vercel did **not** publish the push. Three minutes after pushing, production
+still served the old asset, `/api/echo/provider` returned 404, and GitHub showed
+no deployment or commit status for the new SHA. The workspace has no `.vercel`
+project link and no deploy hook. Publish through the Vercel dashboard/CLI (or
+reconnect the Git integration), then re-check the provider route and model reply.
+Do not force-push.
 
 ## Exact handoff paths
 
