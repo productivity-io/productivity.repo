@@ -387,14 +387,22 @@ export function createEchoServiceRouter(options: EchoRouterOptions = {}): Router
       }
 
       // Stream response chunks smoothly as SSE delta events
-      const words = reply.text.split(/(\s+)/);
+      const words = reply.text.split(/(\s+)/) || [];
       const chunkSize = 6;
+      let deltasSent = false;
       for (let i = 0; i < words.length; i += chunkSize) {
         if (res.writableEnded || res.destroyed) return;
         const piece = words.slice(i, i + chunkSize).join('');
         if (piece) {
           res.write(`event: delta\ndata: ${JSON.stringify({ text: piece })}\n\n`);
+          deltasSent = true;
         }
+      }
+      // If there is text content but no deltas were sent (e.g., only whitespace),
+      // send the full text as a single delta so the client doesn't show a
+      // misleading "could not be completed" fallback.
+      if (!res.writableEnded && !res.destroyed && reply.text.length > 0 && !deltasSent) {
+        res.write(`event: delta\ndata: ${JSON.stringify({ text: reply.text })}\n\n`);
       }
 
       if (!res.writableEnded && !res.destroyed) {
