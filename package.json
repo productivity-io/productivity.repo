@@ -13,8 +13,9 @@
     "build": "vite build",
     "start": "NODE_ENV=production tsx server/index.ts",
     "db:seed": "tsx server/db/seed.ts",
-    "test:echo": "tsx --test tests/echo-config.test.ts tests/echo-commands.test.ts",
-    "test:echo:browser": "node tests/echo-browser.mjs"
+    "test:echo": "tsx --test tests/echo-config.test.ts tests/echo-commands.test.ts tests/echo-conversation.test.ts tests/echo-security.test.ts",
+    "test:echo:browser": "node tests/echo-browser.mjs",
+    "test:echo:provider": "node tests/echo-freellm-provider.mjs"
   },
   "dependencies": {
     "@hookform/resolvers": "^5.0.1",

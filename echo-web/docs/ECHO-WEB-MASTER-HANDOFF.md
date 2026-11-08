@@ -1,94 +1,172 @@
 # ECHO to Veritas - Master Handoff
 
-Updated: 2026-11-07. Latest phase: intelligent typo recognition complete on local feature/echo-fuzzy-commands, with 87 tests, TypeScript, build and browser regression PASS. New branch not pushed. Prior parent PR #2 remains open and security-blocked. No merge/deployment performed.
+Updated: 2026-11-08. Local branch: `main`, based on `f817306` (remote
+`origin/main` was `50f1949` before this work). FreeLLMAPI is ECHO's verified
+primary conversational provider; deterministic commands, security gates and
+offline fallback are preserved; optional free browser speech is implemented.
 
-## Latest typo-recognition phase
+## What changed
 
-Current branch: feature/echo-fuzzy-commands. Base: 67d238ffb52aa526a8db57957af3ea78abe37e1d. Implementation: 0445f910b7fb5a8308965f1954556c62da5cb572. Documentation commit follows it; use git log -1 for exact final documentation HEAD. No uncommitted user work was present at branch creation. Earlier commits, PR and source dirty work preserved.
+1. **FreeLLMAPI is the primary brain.** Natural conversation goes to the
+   FreeLLMAPI OpenAI-compatible gateway. `auto:reliable` is the default model and
+   the gateway chooses the upstream route dynamically. OpenAI is ignored unless
+   `ECHO_ALLOW_PAID_PROVIDER=true`; there is no mandatory paid provider.
+2. **Security hardening.** ECHO sessions require a signed-in portal identity,
+   are bound to the account `sub`, reject unapproved origins, use no shipped
+   fallback secret, validate token format/expiry strictly, allowlist only
+   `message` and `page`, bound all stores and rate-limit messages.
+3. **Natural conversation.** Greetings, typos, follow-ups, page/role context,
+   empathy, jokes, sensitive refusals, provider status and honest no-memory
+   behavior are handled without inventing school records.
+4. **Fuzzy commands.** Politeness, location questions, "pull up", "bring up",
+   "where is" and location-aware navigation resolve locally. Compound plans are
+   atomic and execute nothing if any part is unsupported. Ordinary prose with
+   "and"/"or" stays conversational.
+5. **Speech.** Free browser `speechSynthesis`, on/off, Stop, 0.8-1.5x speed,
+   sentence streaming, no overlap, session-scoped settings and text fallback. A
+   replacement provider can be registered at `window.EchoWidgetSpeechProviders`.
+6. **Provider diagnostics.** Authenticated `/api/echo/provider` plus SSE
+   `event: meta` reveal provider/model/route without keys, prompts or replies.
 
-Read FUZZY_COMMANDS.md for full aliases/strategy/thresholds. The recognizer reuses the existing exact parser and normalization, then scores real registry candidates with bounded edit distance/transposition. High >=0.82 with >=0.12 margin executes safe view navigation; medium >=0.62 or close competitors asks a choice; low executes nothing. Bare fuzzy fragments need confirmation. Conservative grammar preserves ordinary questions and words such as slow/shop/cake. Literal searches are never corrected/split. No extra model calls or dependencies.
+## Verified provider evidence
 
-Pending choices live for 60 seconds, scoped to widget/account, role, view/query, year and available options. Selected commands are re-resolved; reset, unrelated messages, view/role/year changes and logout discard old intent. At most three same-destination navigation/view clauses compose one final URL only after every part validates. Unsupported parts execute nothing. Existing router/URL confirmation verifies execution.
+Command: `ECHO_USE_DESKTOP_SETTINGS=true node tests/echo-freellm-provider.mjs`.
 
-Existing authenticated Assignments subject buttons are now URL-bound and supply current names/codes/IDs locally. Maths aliases the actual Advanced Mathematics option; no new school record access/API calls. Student attendance has no Mathematics filter, so that request is rejected without partial navigation. Marks/grades alias the existing Examinations Results route; no Grades page created.
+- Real local gateway, 292 models visible.
+- Real multi-turn conversation; synthetic code `QX-7319` recalled on turn 2.
+- Provider `freellmapi`, model `command-a-plus-05-2026`, route
+  `cohere/command-a-plus-05-2026`; turns 1554 ms and 1580 ms.
+- The live browser widget received the model-generated marker `PLUMAGE`.
+- An earlier run routed to `qwen/qwen3.8-27b` via `groq`, confirming dynamic
+  routing. Do not hardcode an upstream model in tests.
+- Credentials were read from the existing FreeLLMAPI desktop store only with
+  explicit opt-in, passed to the child server environment, never printed or
+  written to the repository or browser.
 
-Files: src/lib/echoRecognition.ts, echoSubjectOptions.ts, echoCommands.ts; src/components/EchoAssistant.tsx; src/pages/AssignmentsPage.tsx; echo-web/widget/widget.js; tests/echo-commands.test.ts and echo-browser.mjs; existing echo-web/docs planning/handoff and README. No backend/auth or desktop/Android changes.
+## Verified local checks
 
-Final local checks PASS: 87 command/config tests (66 baseline retained), TypeScript, 2045-module production build, syntax/whitespace, full Chrome browser regression using disposable demo DB. Browser verifies actual fuzzy routes, Mathematics assignment cards, sports button, Results table, preserved filters, confidence/cancel/numbered choices, atomic plans, rejected unsupported actions, stale reset/away-back intent, ordinary chat, Stop/errors/mobile/logout/account isolation. Supported view commands cause no conversation call or school write. Fake SSE remains transport evidence, not a new provider test. Initial heap-limited build and development test failures were corrected; final feature checks pass. Separate security audit rerun: 3 PASS / 6 FAIL, unchanged and still blocking release.
+| Check | Result |
+| --- | --- |
+| 129 unit tests: config, commands, conversation, security | PASS |
+| `tsc --noEmit` | PASS |
+| production `vite build` | PASS, 9.1 s |
+| full browser regression | PASS |
+| live FreeLLMAPI provider test | PASS |
 
-## Objective and authorized scope
+Browser coverage includes login, typo commands, verified navigation feedback,
+context help, clipboard success/failure, Stop/reset/error recovery, speech
+on/off/speed/Stop/overlap/failure fallback, 390 px mobile, logout abort and
+second-account isolation. Browser regression uses fake SSE; only the opt-in test
+proves a real model.
 
-Four additions are implemented: local contextual help/suggestions, verified action feedback, Stop and copy. Preserve navigation, filters, ordinary text conversations and per-account widget lifetime. No voice, computer control or school-record writes. User subsequently authorized push, PR, review, CI/provider/security checks and merge only if every gate passes. Deployment and permission changes are not authorized.
+## Configuration contract
 
-## Repositories, local paths and commits
+Server-only variables (never `VITE_*`, never frontend code):
 
-- Source: https://github.com/echo-assistant-project/Echo
-- Source path: F:\Downloads\Echo-Web-Preparation
-- Source branch: feature/echo-web-readiness
-- Source HEAD: dee9b7014f0c3e788570c85c4126820caa15d574
-- Target: https://github.com/productivity-io/productivity.repo
-- Target path: F:\Downloads\Veritas-Echo-Integration
-- Active target branch: feature/echo-fuzzy-commands (parent: feature/echo-context-and-controls)
-- Current main baseline: 50f194969bc5042e6dfca3cd99460946c57a672d
-- Historical main: 9c6e806692513342a1e7c30cfe7e2d85e7405826
-- Feature implementation: 15f2410d54748d7c6cd0f7d41c9947f6d9aee245
-- Initial handoff: eb69a8274d6281898d69bdbf1b7c01e95f8eff65
-- CI/security/provider tests: 94b5231e7bcf142e5662182abec24a7e187e3d09
-- Parent-branch PR only: https://github.com/productivity-io/productivity.repo/pull/2; latest local branch has no PR
+```text
+FREELLMAPI_BASE_URL=https://<public-https-gateway>/v1
+FREELLMAPI_API_KEY=<secret>
+FREELLMAPI_MODEL=auto:reliable
+ECHO_ALLOW_PAID_PROVIDER=false
+ECHO_SESSION_SECRET=<long random value>
+SESSION_SECRET=<long random value>
+```
 
-Documentation commits follow this audited code/test revision. Obtain the exact current documentation HEAD with git log -1. Working tree should be clean after the handoff commit/push. No merge or auto-merge performed.
+- Development: with a key and no base URL, ECHO uses
+  `http://127.0.0.1:31415/v1`; the FreeLLMAPI desktop app must be running.
+- Production: explicit HTTPS only. Credentials in URLs, query strings,
+  non-loopback HTTP and paths other than `/v1` are rejected.
+- Legacy `FREELMAPI_*` and `ECHO_MODEL_*` aliases still work.
+- `/api/echo/provider` reports configured/reachable/model/base host; it never
+  exposes the key.
 
-## Existing architecture and reusable features
+## Vercel status and required action
 
-Authenticated /api/echo/config selects the local shadow-DOM widget. EchoAssistant owns React router/year commands and account teardown. URL controls drive navigation, tabs, search and filters. Model replies are text and cannot execute actions. Existing typo tolerance, streaming, reset and logout cleanup were preserved.
+The deployed site still runs the old build. A model-only prompt received the old
+scripted welcome, so production is not provider-connected. Vercel cannot reach
+this PC's loopback gateway at `127.0.0.1:31415`.
 
-Current main supports a built-in TypeScript public-help engine at /api/echo/v1/sites and configurable external ECHO. These are distinct engines. Python ECHO imports the existing headless backend with client-specific references, bounded history, streaming and site/origin/token sessions. Desktop encrypted memories, tools and device actions are excluded. These changes supply no private school records to either assistant.
+To enable FreeLLMAPI in production:
 
-## Selected additions and affected files
+1. Expose the gateway at a public HTTPS origin (an HTTPS tunnel or a hosted
+   FreeLLMAPI-compatible gateway).
+2. Add `FREELLMAPI_BASE_URL`, `FREELLMAPI_API_KEY`, `FREELLMAPI_MODEL`,
+   `ECHO_SESSION_SECRET` and `SESSION_SECRET` in Vercel Project Settings ->
+   Environment Variables.
+3. Redeploy and sign in.
+4. Check `/api/echo/provider` for `configured: true`, `reachable: true`.
+5. Send a model-only prompt and confirm the SSE `meta` provider/model.
+6. If the values are absent, the deployment intentionally uses deterministic
+   fallback. HTTP 200 or Ready alone is not provider proof.
 
-FEATURE_CANDIDATES.md records ROI: four high-value, low-complexity/risk additions using the current registry, abort plumbing and text rendering. Persistent memory/private-record summaries deferred; voice and device actions excluded.
+No credentials were exposed to frontend code. No paid provider is enabled.
 
-- src/lib/echoCommands.ts: role-aware page help/suggestions from validated local controls. No scraping, record reads or extra model calls.
-- src/lib/echoActionFeedback.ts: wait for observed state; explicit timeout/cancellation replies.
-- src/components/EchoAssistant.tsx: instance-scoped context events and route/role refresh; confirm router/browser URL or academic-year state before success.
-- echo-web/widget/widget.js: suggestions, pending-action status, completed-message copy, clipboard-denial feedback, Stop and 45-second request deadline. Stop discards remote context; next message starts fresh.
-- tests/echo-commands.test.ts and tests/echo-browser.mjs: regressions using temporary synthetic demo data.
-- .github/workflows/echo-checks.yml and tests/echo-security.test.ts: quality CI and genuine security release gates.
-- tests/echo-provider-smoke.mjs and tests/echo-live-fixture.py: opt-in real browser to real external ECHO/provider; no fake engine.
-- echo-web/README.md and echo-web/docs/: inventory, ROI, plan/log, pending work, release evidence, PR summary, Markdown/PDF handoff, PDF generator and binary PDF attributes.
+## Security status
 
-## Test results and commands
+`tests/echo-security.test.ts`: 12/12 PASS. Fixed issues: anonymous issuance,
+unapproved origins, usable public fallback secret, malformed expiry, token
+suffix, unsupported fields, account binding, page-context injection, unbounded
+state and rate limiting.
 
-PASS: 66 tests via node node_modules/tsx/dist/cli.mjs --test tests/echo-config.test.ts tests/echo-commands.test.ts. PASS: TypeScript, build, widget syntax and browser regression on GitHub Linux. Browser regression uses actual portal authentication and fake external SSE, not provider evidence. Covered attendance/typos, page/tab/search/filter/day/back, preserved controls, help/suggestions, action success/forced mismatch, year selector, clipboard success/denial, Stop/reset/503 recovery, 390px mobile viewport, logout abort and second-account isolation. View commands made GET-only portal requests; portal credentials were not sent externally.
+Residual, pre-existing or architectural:
 
-Source headless tests PASS 7/7: from desktop/EchoDesktop run python -m unittest discover -s tests -p test_backend.py. Source code unchanged. An initial root invocation failed imports and was corrected without source edits.
+- `server/utils/auth.ts` still uses a public default cookie secret when
+  `SESSION_SECRET` is unset. Set it privately in production; it is the outer gate.
+- Portal-wide reflected CORS remains; ECHO adds an origin check but does not fix
+  the whole API.
+- History/revocation are process-local; serverless instances do not share them.
+- Stop cannot guarantee upstream cancellation/billing.
+- Route confirmation covers view state, not lazy page-data loading.
+- No physical-device or multi-browser matrix yet.
 
-Real-provider PASS: user approved existing FreeLLMAPI configuration. Encrypted source settings select the compatible loopback gateway at port 31415. Source live_smoke.py passed two actual turns with four history messages. Target provider-smoke passed actual Veritas browser -> actual Python ECHO -> configured gateway: two HTTP 200 turns, ten deltas each, synthetic code recalled, then verified attendance navigation. Durations: 997ms/283ms. No mock replies, private records or keys/responses printed. Only Python backend read the key; never sent to OpenAI/browser/GitHub. This does not verify the built-in OpenAI-only path, upstream gateway internals or HTTPS deployment.
+## Key files
 
-Reproduce from target: set ECHO_SOURCE_ROOT=F:\Downloads\Echo-Web-Preparation and ECHO_USE_DESKTOP_SETTINGS=true in the process, then node tests/echo-provider-smoke.mjs. Alternatively supply approved ECHO_MODEL_BASE_URL and ECHO_MODEL_API_KEY in backend environment. No secret command arguments. Fixtures stop services/remove temp DBs. Parallel local TypeScript/provider attempts exhausted memory; provider rerun sequentially with Node 22 bounded heaps passed. OOM is not TypeScript success; fresh CI provides that pass.
+- `server/services/echo.ts`: authenticated router, account-bound sessions,
+  origin/body/rate checks, SSE, page context.
+- `server/services/echoConversation.ts`: natural conversation, provider priority,
+  FreeLLMAPI/OpenAI config, status/probe, usage metadata.
+- `server/index.ts`: authenticated `/api/echo/config`, `/api/echo/provider`, ECHO
+  mount with cookie/Bearer portal identity.
+- `src/lib/echoCommands.ts`, `src/lib/echoRecognition.ts`: registry, fuzzy
+  commands, atomic plans, prose guards.
+- `echo-web/widget/widget.js`: speech controller, credentials, page context,
+  Stop/reset/copy.
+- `tests/echo-security.test.ts`: 12 release gates.
+- `tests/echo-conversation.test.ts`: 26 conversational/provider tests.
+- `tests/echo-commands.test.ts`: 85 command tests.
+- `tests/echo-browser.mjs`: full browser regression including speech.
+- `tests/echo-freellm-provider.mjs`: opt-in real-provider verification.
+- `.env.example`, `README.md`, `echo-web/README.md`: configuration contract.
 
-CI: https://github.com/productivity-io/productivity.repo/actions/runs/42366552606. Quality job 128385718936 PASS (including TypeScript/build/browser); security job 128385718831 FAIL. Documentation follow-ups rerun CI; inspect exact final head/checks before merge.
+## Git and publication state
 
-## Blocking security findings and limits
+Work was developed on local `main` after fast-forwarding to `f817306`; all
+changes were uncommitted when this handoff was drafted. The exact implementation
+commit is recorded in `git log -1` after the commit; this document is updated in
+the follow-up documentation commit. Do not force-push. Remote `origin/main` and
+the Vercel deployment must be re-checked after pushing.
 
-Run node node_modules/tsx/dist/cli.mjs --test tests/echo-security.test.ts. Actual built-in router, ephemeral loopback, no DB/provider: 3 PASS / 6 FAIL. Failures: anonymous session issuance (201); unapproved origins accepted/reflected (200); usable public-default-secret forgery (200); malformed signed expiry (200); ignored token suffix (200); unsupported tools field accepted/ignored (200, not executed). Invalid signatures, expired tokens and same-process reset revocation PASS. Exact file/line evidence: RELEASE_VERIFICATION.md.
+## Exact handoff paths
 
-Pre-existing static findings: unbounded process-local stores, no account-bound session/logout invalidation, no rate/capacity limits, no durable multi-instance revocation. No real school data tested/exposed. No permissions changed. Agree on authenticated session/hosting design before remediation; do not weaken tests to green the PR. Security failures prohibit merge now.
-
-Action confirmation covers view state, not lazy-page data readiness. Stop cannot guarantee billing cancellation/immediate remote deletion; abandoned sessions expire. Tokens/transcript remain memory-only. Physical mobile devices/other browsers remain release coverage. Built-in provider errors can fall back to static help: Ready alone is not provider proof.
-
-## Git state, pending work and exact handoff paths
-
-Source pre-existing modified: README.md, docs/CODEX_HANDOFF.md, echo-web/README.md, backend/server.py, docs/ARCHITECTURE.md, docs/MIGRATION.md, docs/VALIDATION.md, tests/browser-check.mjs, tests/test_web.py, widget/widget.js. Untracked: echo-web/tests/live_smoke.py. Do not stage/overwrite/reset. Desktop/Android untouched.
-
-Parent branch is pushed with PR #2 open; latest fuzzy branch is local only, clean after its documentation commit. Review its changes before any publication. Prior security/session design and remediation remain separate release gates. Latest user instruction prohibits merge/deployment without approval. No force-push, bypass or auto-merge.
-
-Markdown: F:\Downloads\Veritas-Echo-Integration\echo-web\docs\ECHO-WEB-MASTER-HANDOFF.md
-
-PDF: F:\Downloads\Veritas-Echo-Integration\echo-web\docs\ECHO-WEB-MASTER-HANDOFF.pdf
-
-Backups: F:\ECHO-Handoff\ECHO-WEB-MASTER-HANDOFF.md and F:\ECHO-Handoff\ECHO-WEB-MASTER-HANDOFF.pdf. Regenerate using bundled Python with echo-web/docs/render_handoff.py; render/review and verify copyable text, then refresh backups.
+- Markdown:
+  `F:\Downloads\Veritas-Echo-Integration\echo-web\docs\ECHO-WEB-MASTER-HANDOFF.md`
+- PDF:
+  `F:\Downloads\Veritas-Echo-Integration\echo-web\docs\ECHO-WEB-MASTER-HANDOFF.pdf`
+- Backups: `F:\ECHO-Handoff\ECHO-WEB-MASTER-HANDOFF.md` and `.pdf`
+- PDF generator: `python echo-web/docs/render_handoff.py` (requires reportlab;
+  output text is selectable/copyable).
 
 ## Ready-to-copy continuation prompt
 
-Continue ECHO/Veritas at F:\Downloads\Veritas-Echo-Integration on local feature/echo-fuzzy-commands, based on 67d238f with implementation 0445f910b7fb5a8308965f1954556c62da5cb572. Read this latest phase, FUZZY_COMMANDS.md, PENDING_WORK.md and IMPLEMENTATION_LOG.md first; inspect Git status/log/remotes/worktrees. Fuzzy recognition is complete, with 87 tests, TypeScript/build and full browser regression PASS. New branch not pushed and no new PR; prior parent PR #2 still has six baseline security failures. Preserve source ECHO dirty work and all prior commits. Do not recreate completed features or invent Grades/attendance-subject controls. Medium matches require expiring, scoped confirmation; unsupported multi-part plans execute nothing. Preserve ordinary chat, filters, role checks, logout and local-only recognition. No voice, computer control, new private-record access or writes. Do not weaken security tests or change permissions without agreement. Recheck relevant tests after further code edits. Keep Markdown/PDF handoffs and F:\ECHO-Handoff copies current. Latest instruction: do not merge or deploy without approval.
+Continue ECHO/Veritas at `F:\Downloads\Veritas-Echo-Integration` on local `main`.
+Read this handoff, `PENDING_WORK.md`, `RELEASE_VERIFICATION.md` and
+`FUZZY_COMMANDS.md`, then inspect `git status`, `git log` and remotes. FreeLLMAPI
+is ECHO's primary conversational brain and is verified locally; deterministic
+commands, security gates, offline fallback and free browser speech are complete.
+Do not recreate completed features, weaken tests or enable a paid provider.
+Production Vercel still needs a public HTTPS FreeLLMAPI endpoint plus the
+server-side environment variables; never expose keys to the frontend. After any
+change, rerun the 129 tests, TypeScript, build, browser regression and the opt-in
+provider test. Keep the Markdown/PDF handoffs and `F:\ECHO-Handoff` copies
+current. Verify the deployed site after pushing; do not claim provider success
+from HTTP 200 or Ready alone.

@@ -63,8 +63,9 @@ const echo = createServer(async (req, res) => {
   const history = sessions.get(token);
   if (!history) { res.writeHead(401); return res.end('{}'); }
   if (req.method === 'DELETE') { sessions.delete(token); return res.end('{}'); }
-  const { message } = JSON.parse(raw);
-  assert.deepEqual(Object.keys(JSON.parse(raw)), ['message']);
+  const { message, page } = JSON.parse(raw);
+  assert.deepEqual(Object.keys(JSON.parse(raw)).sort(), ['message', 'page']);
+  assert.ok(typeof page === 'string' && page.startsWith('/'), 'page context must be a portal path');
   res.setHeader('Content-Type', 'text/event-stream');
   const reply = message === 'follow-up' ? `Previous: ${history.at(-1) || 'none'}` : `ECHO: ${message}`;
   history.push(message);
@@ -110,28 +111,48 @@ try {
   await ready(portalOrigin + '/login');
   console.log('Servers ready. Demo accounts loaded:', demo.accounts.length);
   assert.equal((await fetch(apiOrigin + '/api/echo/config')).status, 401);
-  // Actual built-in help engine (no provider key): not the fake SSE service above.
+  // Actual built-in engine (no provider key here): not the fake SSE service above.
+  // Sessions are account-bound, so use a real demo portal login rather than an anonymous token.
   const builtIn = apiOrigin + '/api/echo/v1/sites/productivity-portal';
+  const loginResponse = await fetch(apiOrigin + '/api/auth/login', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ identifier: 'student1', password: 'password123' }),
+  });
+  const portalLogin = await loginResponse.json();
+  assert.ok(portalLogin.token, 'demo portal login must issue a token');
+  const portalCookie = (loginResponse.headers.getSetCookie?.() || []).find(value => value.startsWith('veritas_session='));
+  assert.ok(portalCookie, 'portal login must set the HttpOnly session cookie');
+  // Exactly how the browser widget authenticates: the ECHO bearer token plus the portal cookie.
+  const portalAuth = { Cookie: portalCookie.split(';')[0] };
+  assert.equal((await fetch(builtIn + '/sessions', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' })).status, 401, 'anonymous ECHO sessions must be rejected');
   async function builtInSession() {
-    return (await (await fetch(builtIn + '/sessions', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' })).json()).session_token;
+    const response = await fetch(builtIn + '/sessions', { method: 'POST', headers: { 'Content-Type': 'application/json', ...portalAuth }, body: '{}' });
+    const body = await response.text();
+    if (!response.ok) console.log('ECHO built-in session status:', response.status, body);
+    return JSON.parse(body).session_token;
   }
   async function builtInMessage(token, message) {
-    const response = await fetch(builtIn + '/messages', { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + token }, body: JSON.stringify({ message }) });
+    const response = await fetch(builtIn + '/messages', { method: 'POST', headers: { 'Content-Type': 'application/json', ...portalAuth, Authorization: 'Bearer ' + token }, body: JSON.stringify({ message, page: '/dashboard' }) });
     const raw = await response.text();
     const text = response.ok ? raw.split('\n\n').filter(block => block.startsWith('event: delta\n'))
       .map(block => JSON.parse(block.split('\ndata: ')[1]).text).join('') : raw;
-    return { status: response.status, text };
+    return { status: response.status, text, meta: raw };
   }
   const builtA = await builtInSession();
   const builtB = await builtInSession();
   assert.notEqual(builtA, builtB);
   assert.match((await builtInMessage(builtA, 'How do I apply for leave?')).text, /Leave Requests/);
-  assert.match((await builtInMessage(builtA, 'more')).text, /Following up/);
-  assert.doesNotMatch((await builtInMessage(builtB, 'more')).text, /Following up/);
-  await fetch(builtIn + '/sessions/current', { method: 'DELETE', headers: { Authorization: 'Bearer ' + builtA } });
+  assert.match((await builtInMessage(builtA, 'more')).text, /review/);
+  assert.match((await builtInMessage(builtB, 'more')).text, /which part/i);
+  assert.match((await builtInMessage(builtB, 'how do i aply for leev')).text, /Leave Requests/);
+  const fallbackMeta = (await builtInMessage(builtB, 'hello')).meta;
+  assert.match(fallbackMeta, /event: meta/);
+  assert.match(fallbackMeta, /local-guidance/);
+  assert.doesNotMatch(fallbackMeta, /super-secret|api[_-]?key/i);
+  await fetch(builtIn + '/sessions/current', { method: 'DELETE', headers: { ...portalAuth, Authorization: 'Bearer ' + builtA } });
   assert.equal((await builtInMessage(builtA, 'hello')).status, 401);
   assert.equal((await builtInMessage('invalid', 'hello')).status, 401);
-  console.log('PASS actual built-in help engine, follow-up isolation and reset revocation (no live provider)');
+  console.log('PASS account-bound built-in conversation, typo/follow-up handling, attribution and reset revocation');
   const students = demo.accounts.filter(account => account.role === 'student');
   assert.ok(students.length >= 2);
   console.log('Launching browser...');
@@ -151,6 +172,39 @@ try {
     ],
   });
   const page = await browser.newPage({ viewport: { width: 1280, height: 850 } });
+  // Headless Chromium has no audible voice, so instrument the same browser speech API the widget uses.
+  await page.addInitScript(() => {
+    const state = { spoken: [], cancels: 0, active: 0, maxActive: 0, fail: false, current: null, timer: null, cancelCurrent: null };
+    window.__echoSpeech = state;
+    const fake = {
+      get speaking() { return state.active > 0; },
+      speak(utterance) {
+        if (state.fail) { setTimeout(() => utterance.onerror?.({ error: 'synthesis-failed' }), 0); return; }
+        state.active += 1;
+        state.maxActive = Math.max(state.maxActive, state.active);
+        state.spoken.push({ text: utterance.text, rate: utterance.rate });
+        state.current = utterance;
+        state.timer = setTimeout(() => {
+          if (state.current !== utterance) return;
+          state.current = null;
+          state.active = Math.max(0, state.active - 1);
+          utterance.onend?.();
+        }, 900);
+        state.cancelCurrent = () => {
+          clearTimeout(state.timer);
+          if (state.current !== utterance) return;
+          state.current = null;
+          state.active = Math.max(0, state.active - 1);
+          utterance.onerror?.({ error: 'canceled' });
+        };
+      },
+      cancel() { state.cancels += 1; state.cancelCurrent?.(); state.cancelCurrent = null; },
+      getVoices() { return [{ name: 'Microsoft Aria Online (Natural)', lang: 'en-US', default: true, localService: true }]; },
+      pause() {}, resume() {},
+    };
+    Object.defineProperty(window, 'speechSynthesis', { configurable: true, value: fake });
+    window.SpeechSynthesisUtterance = function (text) { this.text = text; };
+  });
   const errors = [];
   const portalRequests = [];
   page.on('pageerror', error => { console.log('Page error:', error.message); errors.push(error.message); });
@@ -367,6 +421,35 @@ try {
   assert.equal(await widget.locator('.send').isEnabled(), true);
   await page.unroute('**/v1/sites/productivity-portal/messages');
   await send('Hello again');
+  // ---------- Optional spoken replies ----------
+  const speechState = () => page.evaluate(() => window.__echoSpeech);
+  assert.equal(await widget.locator('.voice').getAttribute('aria-pressed'), 'false', 'voice starts off');
+  assert.equal((await speechState()).spoken.length, 0, 'greeting and text replies are silent while voice is off');
+  await widget.locator('.voice').click();
+  assert.equal(await widget.locator('.voice').getAttribute('aria-pressed'), 'true');
+  await page.waitForFunction(() => window.__echoSpeech.spoken.length >= 1);
+  assert.match((await speechState()).spoken[0].text, /Voice replies are on/);
+  await widget.locator('.rate').selectOption('1.25');
+  await send('The courtyard is quiet today. Soft rain falls on the stones.');
+  await page.waitForFunction(() => window.__echoSpeech.spoken.some(item => item.text.includes('courtyard is quiet')));
+  const spokenReply = (await speechState()).spoken.filter(item => item.text.includes('courtyard is quiet'));
+  assert.ok(spokenReply.length >= 1, 'assistant reply is spoken');
+  assert.ok(spokenReply.every(item => item.rate === 1.25), 'selected speed is applied');
+  assert.ok((await speechState()).maxActive <= 1, 'utterances never overlap');
+  const cancelsBeforeStop = (await speechState()).cancels;
+  await widget.locator('.stop').click();
+  await page.waitForFunction(count => window.__echoSpeech.cancels > count, cancelsBeforeStop);
+  assert.equal(await widget.locator('.stop').isHidden(), true, 'Stop disappears after audio is cancelled');
+  await send('Spoken again. Two sentences.');
+  const cancelsBeforeReset = (await speechState()).cancels;
+  await widget.getByRole('button', { name: 'New chat', exact: true }).click();
+  await widget.locator('.status').filter({ hasText: 'New conversation.' }).waitFor();
+  assert.ok((await speechState()).cancels > cancelsBeforeReset, 'new chat stops speech');
+  await widget.locator('.voice').click();
+  assert.equal(await widget.locator('.voice').getAttribute('aria-pressed'), 'false');
+  const silentCount = (await speechState()).spoken.length;
+  await send('This reply should be silent.');
+  assert.equal((await speechState()).spoken.length, silentCount, 'voice off produces no audio');
   // Suggestions remain usable and inside the viewport on mobile.
   await page.setViewportSize({ width: 390, height: 844 });
   const bounds = await widget.locator('.panel').boundingBox();
@@ -390,6 +473,14 @@ try {
   await send('follow-up');
   assert.match(await widget.locator('.assistant').last().textContent(), /none/);
   assert.equal(await page.locator('echo-chat-widget').count(), 1);
+  // Speech failure must never take text chat down.
+  await widget.locator('.voice').click();
+  await page.evaluate(() => { window.__echoSpeech.fail = true; });
+  await send('Text survives speech failure.');
+  assert.match(await widget.locator('.assistant').last().textContent(), /ECHO: Text survives speech failure/);
+  await widget.locator('.voice-note').filter({ hasText: /Voice isn't available/ }).waitFor();
+  assert.equal(await widget.locator('.voice').isDisabled(), true);
+  await page.evaluate(() => { window.__echoSpeech.fail = false; });
   assert.ok(abortedReplies >= 1);
   assert.ok(traffic.every(request => !JSON.stringify(request).includes(portalToken)));
   assert.ok(traffic.every(request => request.headers.cookie === undefined));
@@ -402,7 +493,7 @@ try {
   await page.reload();
   await disabledConfig;
   assert.equal(await page.locator('echo-chat-widget').count(), 0);
-  console.log('PASS portal commands, verified feedback/failure, contextual help/suggestions, clipboard success/failure, stop/reset/error recovery, mobile, logout abort and account isolation; fake SSE transport, not provider evidence');
+  console.log('PASS portal commands, verified feedback/failure, contextual help/suggestions, clipboard success/failure, stop/reset/error recovery, optional speech (on/off, speed, cancel, overlap, failure fallback), mobile, logout abort and account isolation; fake SSE transport, not provider evidence');
 } finally {
   if (browser) await browser.close();
   for (const child of children) if (child.exitCode === null) child.kill();

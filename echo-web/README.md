@@ -1,102 +1,122 @@
 # ECHO integration for the productivity portal
 
-The portal loads the ECHO website assistant after login. Current main supports a built-in TypeScript help engine
-and an optional external ECHO service. The built-in engine is separate from the source project's Python engine;
-model-provider credentials stay on the backend. Integration planning and the master handoff live in `docs/` here.
+ECHO is the signed-in portal assistant. The production path is the built-in
+TypeScript service at `/api/echo`, not a separate Python service.
+
+## Architecture
+
+1. **Signed-in identity.** `/api/echo/config` and every session endpoint require
+   the portal's authenticated user. ECHO session tokens are bound to the account
+   `sub` and expire after 30 minutes. Logout/account changes destroy the widget.
+2. **Deterministic commands first.** Typo-tolerant navigation, filters, search,
+   academic-year changes and "where am I" resolve locally against registered
+   routes and role permissions. Commands never call a model and never perform
+   sensitive or destructive actions.
+3. **FreeLLMAPI is the primary conversational brain.** Natural conversation,
+   follow-ups and explanations go to the FreeLLMAPI OpenAI-compatible gateway.
+   The default model is `auto:reliable`; a concrete model ID can be configured.
+   Each SSE reply reports provider/model/route metadata for diagnostics.
+4. **Offline fallback.** If no provider is configured, the gateway is
+   unreachable, or the request fails, ECHO answers with reviewed deterministic
+   portal guidance. A provider error never produces a fabricated model reply.
+5. **Optional speech.** The widget uses the browser's free on-device
+   `speechSynthesis` by default. On/off, Stop, 0.8-1.5x speed, sentence
+   streaming, non-overlapping playback and session-scoped settings are provided.
+   Text still works if speech fails. A replacement can be registered with
+   `window.EchoWidgetSpeechProviders`; no key or paid TTS is required.
+6. **Paid providers are opt-in only.** `OPENAI_API_KEY` is ignored unless
+   `ECHO_ALLOW_PAID_PROVIDER=true`. FreeLLMAPI always wins when configured.
 
 ## Configure
 
-By default the current portal uses `/api/echo`, with approved static workflow guidance and optional provider
-generation when `OPENAI_API_KEY` is supplied to the server. Set `ECHO_CHAT_ENABLED=false` to disable it. Review
-the production gates in `docs/PENDING_WORK.md` before public hosting. For a dedicated external ECHO service:
-
-1. Provision the tested ECHO service from `echo-assistant-project/Echo/echo-web`. Follow that repository's hosting
-   prerequisites before production. Model credentials are configured on that service only.
-2. Add the reviewed client entry from `clients/productivity.example.json` to the service's configuration. Replace
-   the example production origin with the real portal origin, and approve the greeting and public help content.
-3. Set these environment variables in the Express server process, then restart that process:
+Environment variables are read by the server. Never put provider keys in the
+widget or any `VITE_*` variable. The repository does not auto-load `.env` files;
+set variables in the process or hosting platform.
 
 ```text
-ECHO_CHAT_ENABLED=true
-ECHO_SITE_ID=productivity-portal
-ECHO_API_URL=https://your-echo-api.example.com
+FREELLMAPI_BASE_URL=https://your-public-gateway.example.com/v1
+FREELLMAPI_API_KEY=<server-only secret>
+FREELLMAPI_MODEL=auto:reliable
+ECHO_ALLOW_PAID_PROVIDER=false
+ECHO_SESSION_SECRET=<long random production value>
 ```
 
-The root `.env.example` lists placeholders. The existing app does not automatically load `.env` files. Supply
-variables through the hosting platform or process environment. Development permits a loopback HTTP API such as
-`http://127.0.0.1:8765`; production requires HTTPS. Leave `ECHO_CHAT_ENABLED=false` to keep chat disabled until the
-service is configured. Building or merging the source does not provision or deploy that service.
+- **Local development:** with `FREELLMAPI_API_KEY` set and no base URL, ECHO
+  uses `http://127.0.0.1:31415/v1` when `NODE_ENV` is not `production`. Start
+  the FreeLLMAPI desktop app first.
+- **Production:** non-loopback endpoints must be HTTPS, with no credentials in
+  the URL and no query string. Loopback and plain HTTP are rejected.
+- `FREELMAPI_*` and `ECHO_MODEL_*` remain accepted as legacy aliases.
+- `ECHO_SESSION_SECRET` (or the portal `SESSION_SECRET`) is required for
+  sessions to survive restarts and multiple serverless instances. Without it a
+  random per-process key is used.
+- An external ECHO service can be selected with `ECHO_API_URL`; it must be HTTPS
+  in production and configured with its own provider. Cross-origin requests do
+  not send portal cookies.
+- `ECHO_CHAT_ENABLED=false` hides the assistant.
 
-## How it works
+### Vercel limitation
 
-- `server/services/echo.ts` validates public widget configuration. `/api/echo/config` uses the existing portal
-  authentication middleware and returns only enablement, the public site ID and API origin.
-- `src/components/EchoAssistant.tsx` loads the local widget asset once per signed-in account. It aborts startup
-  and destroys the widget on logout/account changes, including its pending requests and in-memory chat token.
-- `echo-web/widget/widget.js` sends typed messages directly to the configured ECHO service with independent
-  conversation tokens and `credentials: omit`. Portal login tokens and cookies are not forwarded.
-- The service handles isolated sessions, approved client knowledge, streaming and model credentials. The public
-  site ID is configuration, not authentication. Use approved public help content until the service supports any
-  additional access controls needed for private knowledge.
+Vercel cannot reach a gateway running on your PC at `127.0.0.1:31415`. Production
+FreeLLMAPI therefore needs a public HTTPS endpoint reachable from Vercel, plus
+the three `FREELLMAPI_*` variables in **Project Settings -> Environment
+Variables**. Until those exist, the deployed assistant is intentionally limited
+to deterministic guidance. The browser never receives the endpoint key.
 
-No school database records, profiles, marks, attendance, messages or portal actions are supplied automatically
-to ECHO. The initial scope is general portal-navigation help. A user can still type personal information into a
-chat, so approve the service's data-handling notice and provider policy before launch.
+## Diagnostics
 
-## Local assistance and response controls
+`GET /api/echo/provider` requires portal authentication and returns only:
+provider id, primary (`freellmapi`), configured, model, base host, paid-provider
+flag, last usage metadata, reachability and probe HTTP status. It never returns
+keys, prompts or replies. A model-backed SSE reply includes an `event: meta`
+frame with provider, model and upstream route.
 
-Typo-tolerant command recognition is documented in `docs/FUZZY_COMMANDS.md`. It matches only registered routes
-and controls locally, asks confirmation for uncertain matches, and supports atomic navigation-plus-filter plans.
-Existing Assignments subject buttons now preserve URL state and support loaded subject aliases such as maths;
-student attendance has no subject filter. No extra AI calls are used for supported commands.
+## What is not sent to the model
 
-- Page suggestions use the existing route/control registry and the signed-in role. “Help with this page” and
-  “What filters are selected?” describe validated local view state without a model call or record lookup.
-- Navigation replies wait for matching React router and browser URL state; year changes wait for matching
-  selector state. Failure to confirm within two seconds produces a failure message. Confirmation covers view
-  state, not completion of page data loading or any database change.
-- Stop aborts the browser request and discards its conversation token. The next message starts a fresh remote
-  conversation so an unseen partial turn cannot affect later answers. Existing visible messages remain until
-  New chat. Remote cancellation/billing depends on the configured backend; abandoned sessions expire there.
-- Copy is explicit and available on completed assistant messages. Clipboard denial shows an actionable message.
-- Transcript and tokens remain in memory; logout destroys the widget. No persistent chat storage is added.
-- A 45-second browser deadline stops an unresponsive chat request; there is no automatic message replay.
+No school database records, marks, attendance, messages, profiles or portal
+actions are supplied automatically. Only the typed message, the current page
+route and short in-memory conversation history are sent. Users can still type
+personal information, so review provider data handling before launch.
 
-## Upstream widget
-
-The widget comes from `echo-assistant-project/Echo` commit
-`e094251b8cf82b05bfb3f37831b40bda6bfacd4c`, path `echo-web/widget/widget.js`.
-The portal adds an instance identifier, a cancelled-start guard and an `echo-widget:destroy` event for React
-logout cleanup. The portal also adds local context suggestions, verified command replies, Stop and copy controls.
-Keep these adaptations when refreshing the pinned asset. The Python conversation engine is not vendored here.
-
-## Checks and rollout
-
-Use Node 22.5 or newer for the existing `node:sqlite` adapter. Dependencies are already installed in the audited
-checkout; reinstall only when needed.
+## Checks
 
 ```powershell
-npm ci
 npm run test:echo
 node node_modules/typescript/bin/tsc --noEmit
 npm run build
 npm run test:echo:browser
 ```
 
-The browser check uses an installed Chrome/Chromium/Edge and a local fake ECHO service. It exercises the real
-portal login, chat startup, streaming, navigation, context, Stop/copy, mobile layout, logout cleanup and account
-isolation. It also tests the actual built-in static help engine over HTTP with the provider key disabled. Neither
-check proves a live provider integration. Set `ECHO_BROWSER` if discovery needs help. Browser artifacts and
-temporary test-generated SQLite files are ignored; the harness terminates its services and removes its temp DB.
+The browser check uses the built `dist/` output, a disposable portal database
+and a fake SSE transport; it covers login, commands, conversation UI, speech
+controls, fallback, mobile layout, logout cleanup and account isolation. Rebuild
+before running it after client changes.
 
-Release verification is documented in `docs/RELEASE_VERIFICATION.md`. GitHub Actions now runs quality and
-session-security jobs. `node node_modules/tsx/dist/cli.mjs --test tests/echo-security.test.ts` checks production
-requirements against the actual built-in router and currently fails on documented baseline issues; do not skip
-it for merging. For an opt-in real-provider browser test, set `ECHO_SOURCE_ROOT` and approved backend environment
-configuration, then run `node tests/echo-provider-smoke.mjs`. `ECHO_USE_DESKTOP_SETTINGS=true` explicitly permits
-the Python fixture to read the existing encrypted ECHO provider settings locally; no key reaches the widget.
+The opt-in real-provider check starts the actual server, uses the local
+FreeLLMAPI gateway, verifies a multi-turn synthetic code recall, provider
+metadata and the live browser reply. It reads `FREELLMAPI_*` from the
+environment, or from the FreeLLMAPI desktop database only when
+`ECHO_USE_DESKTOP_SETTINGS=true`. It never prints the key.
 
-Before launch, approve real help content, HTTPS/allowed origins, CSP script/connect/style requirements, service
-quotas, privacy notice, support ownership and the ECHO service's production gates. Test with the actual provider
-and supported client browsers. To roll back, set `ECHO_CHAT_ENABLED=false` and restart Express, then reload the
-portal. The existing school modules continue through their original APIs.
+```powershell
+$env:ECHO_USE_DESKTOP_SETTINGS='true'
+npm run test:echo:provider
+```
+
+## Known residual risks
+
+- History and revocation are process-local, so serverless instances do not share
+  them. Sessions remain signed and account-bound, but remote context can reset
+  between instances.
+- The portal's cookie signing secret still has a shipped default when
+  `SESSION_SECRET` is unset. Set a private value in production; ECHO's own
+  fallback is random, but the portal login cookie is the outer gate.
+- Reflected CORS is pre-existing portal-wide behavior; ECHO origin checks add a
+  second gate but do not fix the whole API.
+- Stop aborts the browser request and discards the token, but cannot guarantee
+  upstream cancellation or billing behavior.
+- The browser test uses a fake provider; only the opt-in provider test proves a
+  live model.
+
+Release verification is in `docs/RELEASE_VERIFICATION.md`; pending deployment
+work is in `docs/PENDING_WORK.md`.

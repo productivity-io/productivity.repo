@@ -1,5 +1,5 @@
 /** Bounded local matching against real read-only actions; no model-generated URLs or tools. */
-import { ECHO_PAGES, ECHO_VIEWS, allowed, normalize, normalizePageTerm, resolvePortalCommand } from './echoCommands';
+import { ECHO_PAGES, ECHO_VIEWS, allowed, cleanCommandMessage, normalize, normalizePageTerm, resolvePortalCommand } from './echoCommands';
 import type { CommandContext, PortalCommand } from './echoCommands';
 
 export type Choice = { label: string; message: string };
@@ -22,6 +22,9 @@ const ABBREVIATIONS: Record<string, string> = { att: 'attendance', attn: 'attend
 const VERB_TYPOS: Record<string, string> = { opem: 'open', shiw: 'show' };
 const similarity = (a: string, b: string) => a === b ? 1 : Math.min(a.length, b.length) < 4 ? 0 : 1 - editDistance(a, b) / Math.max(a.length, b.length);
 const tidy = (text: string) => normalize(text).replace(/^(?:the |my )/, '').replace(/\s+(?:right now|for me|please)$/, '').trim();
+// Compound/alternative parsing only applies when the sentence actually starts like a command.
+// Ordinary prose such as "I am tired and stressed" must stay in conversation.
+const looksLikeCommand = (text: string) => /^(?:open|opn|shwo|show|tak|take|go|navigate|view|switch|filter|select|search|find|display|pull|bring|jump|head|let|i (?:want|wanna|wana|would like|need))\b/.test(text);
 
 function ranked(candidates: Candidate[]): Recognition | null {
   const unique = new Map<string, Candidate>();
@@ -44,9 +47,12 @@ function ranked(candidates: Candidate[]): Recognition | null {
 
 export function recognizePortalCommand(message: string, context: CommandContext): Recognition | null {
   if (typeof message !== 'string' || message.length > 4000) return null;
-  const original = message.trim().replace(/^echo[,!\s]+/i, '').replace(/^please\s+/i, '').replace(/[.!?]+$/, '').replace(/[, ]+please$/i, '');
+  const original = cleanCommandMessage(message);
   if (!original) return null;
   let text = normalize(original);
+  // Natural lead-ins are simplified to the existing, safe verb vocabulary.
+  text = text.replace(/^(?:pull up|bring up|jump to|head to|get me to|display|let me see)\s+/, 'open ')
+    .replace(/^i (?:want|wanna|wana|would like|need) to (?:see|view|open|check|get to)\s+/, 'show ');
   // Searches are already safe registered actions; preserve their payload verbatim, even keywords/quotes.
   if (/^(?:search|find|look)\b/.test(text)) {
     const search = resolvePortalCommand(original, context);
@@ -55,6 +61,10 @@ export function recognizePortalCommand(message: string, context: CommandContext)
   // Questions, negations, hypotheticals and quoted instructions do not acquire command intent.
   if (/^(?:what|why|how|where|when|who|explain|tell|describe|say|discuss|do you|i think|i like)\b/.test(text)) {
     const exact = resolvePortalCommand(original, context);
+    // Location questions such as "where is attendance" are genuine navigation requests.
+    if (/^(?:where is|where's|where can i find|how do i get to|how do i open|how do i find)\b/.test(text)) {
+      return exact?.href ? { confidence: 'high', score: 1, action: exact } : null;
+    }
     return exact && !exact.href && !exact.academicYear ? { confidence: 'high', score: 1, action: exact } : null;
   }
   if (/\b(?:not|never|don't|dont|instead|if|maybe)\b|["“”`]|https?:|javascript:|\/\//.test(text)) return null;
@@ -67,16 +77,18 @@ export function recognizePortalCommand(message: string, context: CommandContext)
   if (/\s+or\s+/.test(text)) {
     const alternatives = original.split(/\s+or\s+/i);
     const choices: Choice[] = [];
-    if (alternatives.length > 3) return { confidence: 'low', score: 0, reply: 'Please name one supported page.' };
+    if (alternatives.length > 3) return looksLikeCommand(text) ? { confidence: 'low', score: 0, reply: 'Please name one supported page.' } : null;
     for (const part of alternatives) {
       const result = recognizePortalCommand(part, context);
-      if (!result?.action?.href || result.confidence !== 'high') return { confidence: 'low', score: 0, reply: 'Please name one supported page. Nothing was changed.' };
+      if (!result?.action?.href || result.confidence !== 'high') {
+        return looksLikeCommand(text) ? { confidence: 'low', score: 0, reply: 'Please name one supported page. Nothing was changed.' } : null;
+      }
       choices.push({ label: part, message: part });
     }
     return { confidence: 'medium', score: 0.75, choices, reply: 'Which did you mean? ' + choices.map((c, i) => `${i + 1}: ${c.label}`).join('; ') + '. Reply with a number, or no to cancel.' };
   }
   // An atomic navigation + view plan produces one final URL, never partial execution.
-  if (/\s+(?:and then|then|and)\s+/.test(text) && !/lost and found|students and faculty/.test(text)) {
+  if (looksLikeCommand(text) && /\s+(?:and then|then|and)\s+/.test(text) && !/lost and found|students and faculty/.test(text)) {
     const parts = original.split(/\s+(?:and then|then|and)\s+/i);
     if (parts.length > 3) return { confidence: 'low', score: 0, reply: 'Use at most three supported view commands at a time.' };
     let state = context;

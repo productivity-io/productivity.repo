@@ -25,15 +25,23 @@ npm run dev
 
 ## ECHO Portal Assistant
 
-Signed-in users get the **ECHO** floating assistant with two layers:
+Signed-in users get the **ECHO** floating assistant with three layers:
 
 1. **Instant Read-Only Site Commands** (handled locally in the browser with typo tolerance and role-based access checks):
    - Navigation: `"Open attendance"`, `"open attendence portal"`, `"Open library"`, `"Go back"`, `"Where am I?"`
    - View & Tab Controls: `"Show unread announcements"`, `"Show sports events"`, `"Show Monday timetable"`, `"Show report card"`, `"Show issue history"`
    - Search & Academic Year: `"Search books for physics"`, `"Search students for Aarav"`, `"Switch academic year to 2025-2026"`, `"Clear filters"`
-2. **Conversational Portal Help Engine**:
-   - Works out-of-the-box via the built-in `/api/echo/v1/sites/productivity-portal` SSE service (no external server required).
-   - Can optionally connect to a separate external ECHO server via `ECHO_API_URL=https://...` or use `OPENAI_API_KEY` on the server, or be disabled via `ECHO_CHAT_ENABLED=false`.
+2. **Natural Conversation**:
+   - **FreeLLMAPI is the primary brain.** With `FREELLMAPI_API_KEY` set, the built-in `/api/echo` service sends multi-turn conversation to the FreeLLMAPI gateway (model `auto:reliable` by default) and streams the reply. Commands still resolve locally; the model never executes actions.
+   - If no provider is configured, or the provider is unreachable, ECHO falls back to its deterministic portal guidance. Text remains available when speech fails.
+   - OpenAI is **not** used unless `ECHO_ALLOW_PAID_PROVIDER=true`; there is no mandatory paid provider.
+3. **Optional Speech**: browser-native `speechSynthesis` speaks replies on-device for free, with on/off, Stop, 0.8–1.5× speed, sentence streaming and no overlapping utterances. A replacement provider can be registered at `window.EchoWidgetSpeechProviders`.
+
+ECHO requires a signed-in portal identity; chat sessions are bound to that account. Provider keys stay server-side. Configure through the hosting environment (see [.env.example](.env.example)); the app does not auto-load `.env` files.
+
+> **Vercel:** a loopback FreeLLMAPI gateway (`127.0.0.1:31415`) is not reachable from Vercel. Production conversation needs a public **HTTPS** `FREELLMAPI_BASE_URL` plus `FREELLMAPI_API_KEY` in the Vercel project settings. Without them the deployment stays on deterministic fallback. Never put either value in frontend code.
+
+A separate external ECHO service can still be selected with `ECHO_API_URL=https://...`, and the assistant can be hidden with `ECHO_CHAT_ENABLED=false`.
 
 See [echo-web/README.md](echo-web/README.md) for architecture details.
 

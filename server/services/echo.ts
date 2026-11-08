@@ -1,5 +1,6 @@
 import crypto from 'node:crypto';
 import { Router, Request, Response } from 'express';
+import { buildEchoReply, generateProviderReply, LOCAL_PROVIDER, rememberProviderUsage } from './echoConversation.js';
 
 export type EchoWidgetConfig =
   | { enabled: false }
@@ -82,28 +83,79 @@ export function resolvePortalEchoConfig(env: NodeJS.ProcessEnv = process.env): E
 interface EchoSessionPayload {
   sid: string;
   siteId: string;
+  sub: string;
   exp: number;
 }
 
-interface KnowledgeEntry {
-  id: string;
-  title: string;
-  keywords: string[];
-  answer: string;
+/** Authenticated portal identity, resolved by the host app from its own session cookie/token. */
+export interface EchoIdentity {
+  sub: string;
+  role: 'student' | 'teacher' | 'coordinator' | 'principal';
+  name?: string;
 }
 
-const ECHO_SESSION_SECRET =
-  process.env.ECHO_SESSION_SECRET || 'veritas-echo-isolated-chat-session-secret-v1';
+export interface EchoRouterOptions {
+  /** Secure by default: without an authenticator, every session endpoint denies access. */
+  authenticate?: (req: Request) => EchoIdentity | null;
+  allowedOrigins?: readonly string[];
+}
+
+/**
+ * No shipped fallback secret. A configured secret is hashed into the ECHO key; otherwise an
+ * unguessable per-process key is used. Tokens and history are process-local by design.
+ */
+const ECHO_SESSION_SECRET = (() => {
+  const configured = (process.env.ECHO_SESSION_SECRET || process.env.SESSION_SECRET || '').trim();
+  return configured
+    ? crypto.createHash('sha256').update('echo-session:' + configured).digest()
+    : crypto.randomBytes(32);
+})();
 const SESSION_TTL_SECONDS = 1800;
+const MAX_SESSIONS = 1000;
+const MAX_REVOKED = 5000;
+const MAX_MESSAGES_PER_MINUTE = 30;
+const ALLOWED_BODY_FIELDS = new Set(['message', 'page']);
 
 const sessionHistory = new Map<string, Array<{ user: string; assistant: string }>>();
 const revokedSessionIds = new Set<string>();
+const messageTimestamps = new Map<string, number[]>();
 
-function createEchoSessionToken(siteId: string): { token: string; sid: string } {
+function rememberSession(sid: string, history: Array<{ user: string; assistant: string }> = []) {
+  if (!sessionHistory.has(sid) && sessionHistory.size >= MAX_SESSIONS) {
+    const oldest = sessionHistory.keys().next().value;
+    if (oldest !== undefined) sessionHistory.delete(oldest);
+  }
+  sessionHistory.set(sid, history);
+}
+
+function revokeSession(sid: string) {
+  if (revokedSessionIds.size >= MAX_REVOKED) {
+    const oldest = revokedSessionIds.values().next().value;
+    if (oldest !== undefined) revokedSessionIds.delete(oldest);
+  }
+  revokedSessionIds.add(sid);
+  sessionHistory.delete(sid);
+}
+
+function allowMessage(sub: string): boolean {
+  const now = Date.now();
+  const recent = (messageTimestamps.get(sub) || []).filter(at => now - at < 60_000);
+  if (recent.length >= MAX_MESSAGES_PER_MINUTE) return false;
+  recent.push(now);
+  messageTimestamps.set(sub, recent);
+  if (messageTimestamps.size > MAX_SESSIONS) {
+    const oldest = messageTimestamps.keys().next().value;
+    if (oldest !== undefined) messageTimestamps.delete(oldest);
+  }
+  return true;
+}
+
+function createEchoSessionToken(siteId: string, sub: string): { token: string; sid: string } {
   const sid = crypto.randomBytes(18).toString('base64url');
   const payload: EchoSessionPayload = {
     sid,
     siteId,
+    sub,
     exp: Date.now() + SESSION_TTL_SECONDS * 1000,
   };
   const encoded = Buffer.from(JSON.stringify(payload)).toString('base64url');
@@ -113,243 +165,87 @@ function createEchoSessionToken(siteId: string): { token: string; sid: string } 
 
 function verifyEchoSessionToken(token: string, expectedSiteId: string): EchoSessionPayload | null {
   try {
-    const [encoded, sig] = token.split('.');
+    if (typeof token !== 'string' || token.length > 4096) return null;
+    const parts = token.split('.');
+    // Exactly two segments: a valid token plus any suffix is rejected.
+    if (parts.length !== 2) return null;
+    const [encoded, sig] = parts;
     if (!encoded || !sig) return null;
     const expectedSig = crypto.createHmac('sha256', ECHO_SESSION_SECRET).update(encoded).digest('base64url');
     const a = Buffer.from(sig);
     const b = Buffer.from(expectedSig);
     if (a.length !== b.length || !crypto.timingSafeEqual(a, b)) return null;
-    const payload = JSON.parse(Buffer.from(encoded, 'base64url').toString('utf8')) as EchoSessionPayload;
-    if (payload.siteId !== expectedSiteId || payload.exp < Date.now()) return null;
+    const payload = JSON.parse(Buffer.from(encoded, 'base64url').toString('utf8')) as Partial<EchoSessionPayload>;
+    if (!payload || typeof payload !== 'object') return null;
+    if (typeof payload.sid !== 'string' || payload.sid.length < 10 || payload.sid.length > 128) return null;
+    if (typeof payload.sub !== 'string' || !payload.sub || payload.sub.length > 128) return null;
+    if (payload.siteId !== expectedSiteId) return null;
+    if (typeof payload.exp !== 'number' || !Number.isFinite(payload.exp) || !Number.isInteger(payload.exp)) return null;
+    const now = Date.now();
+    if (payload.exp <= now || payload.exp > now + SESSION_TTL_SECONDS * 1000 + 60_000) return null;
     if (revokedSessionIds.has(payload.sid)) return null;
-    return payload;
+    return payload as EchoSessionPayload;
   } catch {
     return null;
   }
 }
 
-const PORTAL_KNOWLEDGE: readonly KnowledgeEntry[] = [
-  {
-    id: 'echo-commands',
-    title: 'ECHO Quick Commands & Navigation',
-    keywords: ['command', 'commands', 'navigate', 'navigation', 'shortcut', 'open', 'filter', 'search', 'what can you do', 'help', 'features'],
-    answer:
-      'You can type direct portal commands right here in ECHO to jump to pages or filter views instantly:\n' +
-      '• Open any module: "Open attendance", "Open assignments", "Open library", "Open timetable", or "Open calendar"\n' +
-      '• Filter current views: "Show unread announcements", "Show sports events", "Show overdue assignments", "Show Monday timetable", or "Show report card"\n' +
-      '• Search & reset: "Search books for physics", "Find science in library", "Clear filters", or "Go back"',
-  },
-  {
-    id: 'attendance-guide',
-    title: 'Attendance & Correction Requests',
-    keywords: ['attendance', 'absent', 'present', 'late', 'excused', 'percentage', 'correction', 'shortage', '75%', '85%'],
-    answer:
-      'In the Attendance module (/attendance), students can review daily attendance, subject-wise attendance percentages, and monthly logs. ' +
-      'If an entry looks inaccurate, students can submit an Attendance Correction Request from the "Corrections" tab with a reason—teachers and coordinators review and approve or decline requests. ' +
-      'Type "Open attendance" or "Show subject attendance" to jump straight there.',
-  },
-  {
-    id: 'assignments-homework',
-    title: 'Homework & Assignments',
-    keywords: ['assignment', 'assignments', 'homework', 'submit', 'submission', 'grade', 'graded', 'overdue', 'upload', 'due date'],
-    answer:
-      'The Assignments module (/assignments) lists all class assignments with instructions, attachments, due dates, and maximum marks. ' +
-      'Students can submit text responses and upload supporting files, then track statuses from Assigned → Submitted → Graded with teacher remarks. ' +
-      'Teachers can create assignments and grade student submissions. Try typing "Open assignments" or "Show overdue assignments".',
-  },
-  {
-    id: 'timetable-schedule',
-    title: 'Class Timetable & Substitutions',
-    keywords: ['timetable', 'schedule', 'period', 'class time', 'substitution', 'cancelled', 'room', 'monday', 'tuesday', 'wednesday', 'thursday', 'friday'],
-    answer:
-      'The Timetable module (/timetable) shows both Weekly and Daily schedules, including subjects, faculty names, room numbers, break periods, and live substitution or cancelled-class notices. ' +
-      'Coordinators can assign substitute faculty or update period statuses. Try typing "Open timetable" or "Show Monday timetable".',
-  },
-  {
-    id: 'exams-results',
-    title: 'Examinations & Report Cards',
-    keywords: ['exam', 'exams', 'examination', 'examinations', 'result', 'results', 'marks', 'report card', 'grades', 'rank', 'syllabus'],
-    answer:
-      'The Examinations module (/examinations) provides subject-wise marks, term exam schedules with room and syllabus notes, and printable official Report Cards. ' +
-      'Teachers and coordinators can enter or update exam marks for their classes. Try typing "Open examinations" or "Show report card".',
-  },
-  {
-    id: 'leave-requests',
-    title: 'Leave Applications & Approvals',
-    keywords: ['leave', 'leaves', 'sick', 'medical', 'absence', 'apply for leave', 'vacation', 'permission'],
-    answer:
-      'To apply for leave, open Leave Requests (/leave-requests), choose start and end dates, select the leave type (Medical, Family, Academic Event, etc.), attach optional supporting documents, and submit. ' +
-      'Teachers, Academic Coordinators, and the Principal can review pending leave requests and record approval remarks. Try typing "Open leave requests".',
-  },
-  {
-    id: 'library-catalogue',
-    title: 'Library Catalogue & Book Issues',
-    keywords: ['library', 'book', 'books', 'isbn', 'borrow', 'issue', 'return', 'fine', 'overdue book', 'catalogue', 'catalog'],
-    answer:
-      'The Library module (/library) lets you search available books by title, author, category, or ISBN, check rack locations, and view active book issue history, due dates, and return statuses. ' +
-      'Try typing "Search books for physics" or "Show issue history".',
-  },
-  {
-    id: 'announcements-alerts',
-    title: 'Announcements & Emergency Alerts',
-    keywords: ['announcement', 'announcements', 'notice', 'notices', 'alert', 'emergency', 'circular', 'unread'],
-    answer:
-      'Announcements (/announcements) displays school-wide circulars, academic updates, event notices, and high-priority Emergency Alerts. ' +
-      'Coordinator announcements flow through Principal executive approval, while Emergency Alerts highlight critical instructions at the top of the portal. ' +
-      'Try typing "Open announcements" or "Show unread announcements".',
-  },
-  {
-    id: 'transport-buses',
-    title: 'School Transport & Bus Routes',
-    keywords: ['transport', 'bus', 'buses', 'route', 'driver', 'pickup', 'drop', 'attendant', 'delay'],
-    answer:
-      'The Transport module (/transport) shows assigned bus numbers, morning and afternoon departure timings, stop schedules, driver and bus attendant contact details, and a form to report transport issues. ' +
-      'Type "Open transport" to view route details.',
-  },
-  {
-    id: 'portfolio-achievements',
-    title: 'Student Portfolio & Achievements',
-    keywords: ['portfolio', 'achievement', 'achievements', 'certificate', 'award', 'project', 'skills', 'extracurricular'],
-    answer:
-      'The Student Portfolio (/portfolio) showcases academic awards, projects, sports and cultural achievements, skills, and teacher feedback, with a print/export presentation mode. ' +
-      'Students can submit new portfolio entries for faculty verification. Try typing "Open portfolio" or "Show sports achievements".',
-  },
-  {
-    id: 'lost-found-contacts-comm',
-    title: 'Communication, Contacts & Lost and Found',
-    keywords: ['contact', 'contacts', 'communication', 'message', 'teacher', 'lost', 'found', 'principal office', 'it support'],
-    answer:
-      '• Communication (/communication): Request a conversation with a subject teacher or coordinator and message once accepted.\n' +
-      '• Quick Contacts (/contacts): Directory of faculty, coordinator, Principal’s Office, transport desk, library, and IT support.\n' +
-      '• Lost & Found (/lost-and-found): Report lost or found campus items and submit claim requests.',
-  },
-  {
-    id: 'assistant-scope',
-    title: 'Assistant Scope & Privacy',
-    keywords: ['password', 'reset', 'private', 'record', 'change my marks', 'delete', 'who am i', 'account', 'policy', 'privacy'],
-    answer:
-      'ECHO provides general portal navigation and workflow guidance from approved help content. For privacy and security, ECHO cannot view or modify private student records, marks, attendance entries, messages, or passwords. ' +
-      'To update your password or preferences, type "Open profile", or contact school staff for official academic changes.',
-  },
-];
-
-function buildLocalEchoReply(
-  message: string,
-  history: Array<{ user: string; assistant: string }>
-): { text: string; references: Array<{ title: string }> } {
-  const lower = message.toLowerCase().trim();
-
-  if (/^(hi|hello|hey|good morning|good afternoon|good evening)\b/.test(lower)) {
-    return {
-      text:
-        'Hello! I am ECHO, your Veritas portal assistant. I can explain how any module works or navigate the portal for you—try asking "How do I apply for leave?" or typing commands like "Open attendance" or "Search books for physics".',
-      references: [{ title: 'ECHO Quick Commands & Navigation' }],
-    };
-  }
-
-  const scored = PORTAL_KNOWLEDGE.map(entry => {
-    let score = 0;
-    for (const kw of entry.keywords) {
-      if (lower.includes(kw)) {
-        score += kw.includes(' ') ? 3 : 2;
-      }
+function configuredOrigins(): string[] {
+  const raw = (process.env.ECHO_ALLOWED_ORIGINS || process.env.APP_ORIGIN || '')
+    .split(',')
+    .map(value => value.trim().replace(/\/$/, ''))
+    .filter(Boolean);
+  return raw.filter(value => {
+    try {
+      return new URL(value).protocol === 'https:';
+    } catch {
+      return false;
     }
-    return { entry, score };
-  })
-    .filter(item => item.score > 0)
-    .sort((a, b) => b.score - a.score);
-
-  if (scored.length > 0) {
-    const top = scored.slice(0, 2);
-    const text = top.map(item => item.entry.answer).join('\n\n');
-    return {
-      text,
-      references: top.map(item => ({ title: item.entry.title })),
-    };
-  }
-
-  if (history.length > 0 && /\b(more|else|that|it|again|follow[- ]?up)\b/.test(lower)) {
-    const prev = history[history.length - 1];
-    return {
-      text:
-        `Following up on "${prev.user}": you can jump directly to any module by typing "Open <module name>" (for example, "Open dashboard", "Open calendar", or "Open communication"), or ask me about attendance, assignments, exams, leave requests, library books, or transport.`,
-      references: [{ title: 'ECHO Quick Commands & Navigation' }],
-    };
-  }
-
-  return {
-    text:
-      'I can help you navigate the Veritas school portal and explain its workflows. Ask me about Attendance, Assignments, Timetable, Examinations, Leave Requests, Library, Transport, Portfolio, Lost & Found, or Announcements—or type a command like "Open timetable" or "Search books for physics".',
-    references: [
-      { title: 'ECHO Quick Commands & Navigation' },
-      { title: 'Assistant Scope & Privacy' },
-    ],
-  };
-}
-
-async function generateOptionalProviderReply(
-  message: string,
-  history: Array<{ user: string; assistant: string }>,
-  signal: AbortSignal
-): Promise<{ text: string; references: Array<{ title: string }> } | null> {
-  const openAiKey = process.env.OPENAI_API_KEY?.trim();
-  if (!openAiKey) return null;
-
-  const knowledgeContext = PORTAL_KNOWLEDGE.map(k => `[${k.title}]: ${k.answer}`).join('\n');
-  const messages = [
-    {
-      role: 'system',
-      content:
-        'You are ECHO, the helpful website navigation assistant for Veritas Collegiate Academy portal. ' +
-        'Answer concisely using ONLY the approved portal guidance below. Never claim to read or alter private school records.\n\n' +
-        knowledgeContext,
-    },
-    ...history.slice(-4).flatMap(turn => [
-      { role: 'user' as const, content: turn.user },
-      { role: 'assistant' as const, content: turn.assistant },
-    ]),
-    { role: 'user' as const, content: message },
-  ];
-
-  const response = await fetch('https://api.openai.com/v1/chat/completions', {
-    method: 'POST',
-    headers: {
-      Authorization: `Bearer ${openAiKey}`,
-      'Content-Type': 'application/json',
-    },
-    body: JSON.stringify({
-      model: process.env.ECHO_OPENAI_MODEL || 'gpt-4o-mini',
-      messages,
-      max_tokens: 350,
-      temperature: 0.3,
-    }),
-    signal,
   });
-
-  if (!response.ok) return null;
-  const data = (await response.json()) as { choices?: Array<{ message?: { content?: string } }> };
-  const text = data.choices?.[0]?.message?.content?.trim();
-  if (!text) return null;
-  return {
-    text,
-    references: [{ title: 'Portal navigation' }],
-  };
 }
 
-export function createEchoServiceRouter(): Router {
+function originAllowed(req: Request, extra: readonly string[]): boolean {
+  const origin = req.headers.origin;
+  // Non-browser clients and same-origin navigations may omit Origin. Identity is still required.
+  if (!origin) return true;
+  if (origin === 'null') return false;
+  let parsed: URL;
+  try {
+    parsed = new URL(origin);
+  } catch {
+    return false;
+  }
+  if (parsed.username || parsed.password || parsed.search || parsed.hash) return false;
+  const normalized = parsed.origin;
+  const host = String(req.headers.host || '').toLowerCase();
+  if (host && parsed.host.toLowerCase() === host) return true;
+  if (configuredOrigins().includes(normalized) || extra.some(value => value.replace(/\/$/, '') === normalized)) {
+    return true;
+  }
+  // Loopback development servers (the Vite proxy changes Host) outside production only.
+  const loopback = ['localhost', '127.0.0.1', '[::1]'].includes(parsed.hostname);
+  return loopback && parsed.protocol === 'http:' && process.env.NODE_ENV !== 'production';
+}
+
+export function createEchoServiceRouter(options: EchoRouterOptions = {}): Router {
   const router = Router();
+  const authenticate = options.authenticate ?? (() => null);
+  const extraOrigins = options.allowedOrigins ?? [];
 
   router.use((req: Request, res: Response, next) => {
+    res.setHeader('Cache-Control', 'no-store');
+    res.setHeader('X-Content-Type-Options', 'nosniff');
+    if (!originAllowed(req, extraOrigins)) {
+      res.status(403).json({ error: 'Origin is not approved for this ECHO site.' });
+      return;
+    }
     const origin = req.headers.origin;
-    if (origin) {
+    if (origin && origin !== 'null') {
       res.setHeader('Access-Control-Allow-Origin', origin);
       res.setHeader('Vary', 'Origin');
-    } else {
-      res.setHeader('Access-Control-Allow-Origin', '*');
     }
     res.setHeader('Access-Control-Allow-Headers', 'Authorization, Content-Type');
     res.setHeader('Access-Control-Allow-Methods', 'GET, POST, DELETE, OPTIONS');
-    res.setHeader('Cache-Control', 'no-store');
     if (req.method === 'OPTIONS') {
       res.status(204).end();
       return;
@@ -371,6 +267,20 @@ export function createEchoServiceRouter(): Router {
     return siteId;
   };
 
+  const requireIdentity = (req: Request, res: Response): EchoIdentity | null => {
+    let identity: EchoIdentity | null = null;
+    try {
+      identity = authenticate(req);
+    } catch {
+      identity = null;
+    }
+    if (!identity || typeof identity.sub !== 'string' || !identity.sub) {
+      res.status(401).json({ error: 'Sign in to the portal to use ECHO.' });
+      return null;
+    }
+    return identity;
+  };
+
   router.get('/:siteId/config', (req: Request, res: Response) => {
     if (!validateSite(req, res)) return;
     res.json({
@@ -387,8 +297,10 @@ export function createEchoServiceRouter(): Router {
   router.post('/:siteId/sessions', (req: Request, res: Response) => {
     const siteId = validateSite(req, res);
     if (!siteId) return;
-    const { token, sid } = createEchoSessionToken(siteId);
-    sessionHistory.set(sid, []);
+    const identity = requireIdentity(req, res);
+    if (!identity) return;
+    const { token, sid } = createEchoSessionToken(siteId, identity.sub);
+    rememberSession(sid);
     res.status(201).json({
       session_token: token,
       expires_in: SESSION_TTL_SECONDS,
@@ -398,38 +310,57 @@ export function createEchoServiceRouter(): Router {
   router.delete('/:siteId/sessions/current', (req: Request, res: Response) => {
     const siteId = validateSite(req, res);
     if (!siteId) return;
+    const identity = requireIdentity(req, res);
+    if (!identity) return;
     const authHeader = req.headers.authorization || '';
     const token = authHeader.startsWith('Bearer ') ? authHeader.slice(7) : '';
     const session = verifyEchoSessionToken(token, siteId);
-    if (!session) {
+    if (!session || session.sub !== identity.sub) {
       res.status(401).json({ error: 'Session expired or invalid.' });
       return;
     }
-    revokedSessionIds.add(session.sid);
-    sessionHistory.delete(session.sid);
+    revokeSession(session.sid);
     res.json({});
   });
 
   router.post('/:siteId/messages', async (req: Request, res: Response) => {
     const siteId = validateSite(req, res);
     if (!siteId) return;
+    const identity = requireIdentity(req, res);
+    if (!identity) return;
     const authHeader = req.headers.authorization || '';
     const token = authHeader.startsWith('Bearer ') ? authHeader.slice(7) : '';
     const session = verifyEchoSessionToken(token, siteId);
-    if (!session) {
+    if (!session || session.sub !== identity.sub) {
       res.status(401).json({ error: 'Session expired or invalid.' });
       return;
     }
 
-    const message = typeof req.body?.message === 'string' ? req.body.message.trim() : '';
+    const body = req.body && typeof req.body === 'object' ? (req.body as Record<string, unknown>) : {};
+    if (Object.keys(body).some(key => !ALLOWED_BODY_FIELDS.has(key))) {
+      res.status(400).json({ error: 'Unsupported request field.' });
+      return;
+    }
+    const message = typeof body.message === 'string' ? body.message.trim() : '';
     if (!message || message.length > 4000) {
       res.status(400).json({ error: 'Provide a valid message up to 4000 characters.' });
+      return;
+    }
+    // Page context only phrases a conversational reply; it never grants permissions or executes actions.
+    if (body.page !== undefined && (typeof body.page !== 'string' || body.page.length > 100 || !/^\/[a-z0-9\-/]*$/.test(body.page))) {
+      res.status(400).json({ error: 'Invalid page context.' });
+      return;
+    }
+    if (!allowMessage(identity.sub)) {
+      res.status(429).json({ error: 'Too many ECHO messages. Please wait a moment and try again.' });
       return;
     }
 
     const history = sessionHistory.get(session.sid) || [];
     const abortController = new AbortController();
-    req.on('close', () => abortController.abort());
+    // IncomingMessage 'close' fires when the request body completes, which would abort the
+    // provider call itself. Only an unfinished response means the client actually disconnected.
+    res.on('close', () => { if (!res.writableEnded) abortController.abort(); });
 
     res.setHeader('Content-Type', 'text/event-stream; charset=utf-8');
     res.setHeader('Cache-Control', 'no-cache, no-transform');
@@ -437,13 +368,23 @@ export function createEchoServiceRouter(): Router {
     res.flushHeaders?.();
 
     try {
-      const reply =
-        (await generateOptionalProviderReply(message, history, abortController.signal).catch(() => null)) ||
-        buildLocalEchoReply(message, history);
+      const context = {
+        name: identity.name,
+        role: identity.role,
+        page: typeof body.page === 'string' ? body.page : undefined,
+      };
+      const providerReply = await generateProviderReply(message, history, context, abortController.signal).catch(() => null);
+      const reply = providerReply || { ...buildEchoReply(message, history, context), provider: LOCAL_PROVIDER };
+      if (!reply.provider || reply.provider.id === 'local-guidance') rememberProviderUsage(LOCAL_PROVIDER);
 
       history.push({ user: message, assistant: reply.text });
       if (history.length > 10) history.splice(0, history.length - 10);
-      sessionHistory.set(session.sid, history);
+      rememberSession(session.sid, history);
+
+      // Provider attribution is explicit so the UI/tests can verify which brain answered.
+      if (!res.writableEnded && !res.destroyed) {
+        res.write(`event: meta\ndata: ${JSON.stringify({ provider: reply.provider || LOCAL_PROVIDER })}\n\n`);
+      }
 
       // Stream response chunks smoothly as SSE delta events
       const words = reply.text.split(/(\s+)/);

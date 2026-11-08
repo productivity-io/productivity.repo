@@ -12,6 +12,7 @@ import { createSessionToken, verifySessionToken, verifyPassword, hashPassword, S
 import { fileStorage } from './services/fileStorage.js';
 import { schoolService } from './services/schoolService.js';
 import { resolvePortalEchoConfig, createEchoServiceRouter } from './services/echo.js';
+import { echoProviderStatus, probeEchoProvider } from './services/echoConversation.js';
 
 const app = express();
 const PORT = Number(process.env.PORT) || 3001;
@@ -91,8 +92,31 @@ app.get('/api/health', (_req: Request, res: Response) => {
   });
 });
 
-// Self-hosted ECHO v1 chat endpoints (isolated session tokens, zero portal cookie/token access)
-app.use('/api/echo/v1/sites', createEchoServiceRouter());
+// Self-hosted ECHO v1 chat endpoints. Sessions are bound to the signed-in portal account;
+// the widget never sends model text, record data or provider keys to the browser.
+app.use('/api/echo/v1/sites', createEchoServiceRouter({
+  authenticate: (req: Request) => {
+    const authHeader = req.headers.authorization;
+    // The widget's ECHO bearer token occupies Authorization, so the portal identity comes
+    // from the HttpOnly cookie. API clients may instead use their portal token directly.
+    const candidates = [
+      authHeader?.startsWith('Bearer ') ? authHeader.slice(7) : '',
+      req.cookies?.veritas_session || '',
+    ].filter(Boolean);
+    for (const token of candidates) {
+      const payload = verifySessionToken(token);
+      if (!payload) continue;
+      const user = db.select().from(schema.users).where(eq(schema.users.id, payload.userId)).get();
+      if (!user || !user.isActive) continue;
+      return {
+        sub: String(user.id),
+        role: user.role as 'student' | 'teacher' | 'coordinator' | 'principal',
+        name: user.fullName.split(/\s+/)[0],
+      };
+    }
+    return null;
+  },
+}));
 
 app.get('/api/echo/config', requireAuth, (_req: Request, res: Response) => {
   res.setHeader('Cache-Control', 'no-store');
@@ -101,6 +125,14 @@ app.get('/api/echo/config', requireAuth, (_req: Request, res: Response) => {
   } catch {
     res.status(503).json({ error: 'The ECHO assistant is not configured. Contact the portal administrator.' });
   }
+});
+
+// Server-side provider diagnostics: no keys, prompts or replies are returned.
+app.get('/api/echo/provider', requireAuth, async (_req: Request, res: Response) => {
+  res.setHeader('Cache-Control', 'no-store');
+  const status = echoProviderStatus();
+  const probe = await probeEchoProvider();
+  res.json({ ...status, reachable: probe.reachable, probeStatus: probe.status });
 });
 
 app.get('/api/auth/demo-accounts', (_req: Request, res: Response) => {

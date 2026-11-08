@@ -122,8 +122,22 @@ export const normalizePageTerm = (input: string): string => {
   let cleaned = normalize(input);
   cleaned = cleaned.replace(/\s+(?:portal|page|screen|module|section|tab|view|hub)s?$/i, '').trim();
   cleaned = cleaned.replace(/^(?:the|my)\s+/i, '').trim();
+  cleaned = cleaned.replace(/^(?:page|screen|section)\s+(?:for|of|about)\s+/i, '').trim();
   return TYPO_MAP[cleaned] || cleaned;
 };
+
+/** Removes greetings and politeness only; the command itself is never rewritten here. */
+export function cleanCommandMessage(message: string): string {
+  return message.trim()
+    .replace(/^(?:hey|hi|hello)[,\s]+echo[,\s!]*/i, '')
+    .replace(/^echo[,\s!]+/i, '')
+    .replace(/^(?:please\s+)?(?:can|could|would|will)\s+you(?:\s+please)?\s+/i, '')
+    .replace(/^please\s+/i, '')
+    .replace(/^for me[,\s]+/i, '')
+    .replace(/[\s,]+please$/i, '')
+    .replace(/[.!?]+$/, '')
+    .trim();
+}
 
 const pageNamed = (text: string) => {
   const norm = normalize(text);
@@ -139,19 +153,15 @@ const pageNamed = (text: string) => {
 };
 
 export function resolvePortalCommand(message: string, context: Context): PortalCommand | null {
-  const original = message.trim()
-    .replace(/^echo[,!\s]+/i, '')
-    .replace(/^please\s+/i, '')
-    .replace(/[\s,]+please$/i, '')
-    .replace(/[.!?]+$/, '');
+  const original = cleanCommandMessage(message);
   if (!original || original.length > 4000) return null;
   const text = normalize(original);
   if (/^(help(?: with this page)?|what can i do here|what filters are selected|explain this page)$/.test(text)) {
     const help = portalHelp(context);
     return { reply: help.summary + '\nTry: ' + help.suggestions.filter(s => s !== 'Help with this page').join('; ') + '. These commands change the view only.' };
   }
-  if (/^(go )?back$|^previous page$/.test(text)) return { back: true, reply: 'Opening the previous portal view.' };
-  if (/^(where am i|what page am i on)$/.test(text)) {
+  if (/^(go |take me )?back$|^previous (?:portal )?(?:page|view)$/.test(text)) return { back: true, reply: 'Opening the previous portal view.' };
+  if (/^(where am i|what page am i on|which page is this)$/.test(text)) {
     return { reply: 'You are on ' + (ECHO_PAGES.find(p => p.path === context.path)?.label || 'the portal') + '.' };
   }
   const year = text.match(/^(?:switch|change|select|set)(?: the| my)?(?: academic| school)? year(?: to)? (\d{4}-\d{4})$/);
@@ -159,9 +169,10 @@ export function resolvePortalCommand(message: string, context: Context): PortalC
     ? { academicYear: year[1], reply: `Selected academic year ${year[1]}.` }
     : { reply: 'That academic year is not in the portal selector.' };
 
-  const goto = text.match(/^(?:open|go to|take me to|navigate to|show(?: me)?|view|switch to) (?:the |my )?(.+)$/);
+  const goto = text.match(/^(?:open|go to|take me to|navigate to|show(?: me)?|view|switch to|pull up|bring up|jump to|head to|get me to|display|let me see|i (?:want|wanna|wana|would like|need)(?: to)? (?:see|view|open|check|get to)) (?:the |my )?(.+)$/);
   const directPortal = !goto && text.match(/^(?:the |my )?(.+?)(?:\s+(?:portal|page))$/);
-  const named = (goto && pageNamed(goto[1])) || (directPortal && pageNamed(directPortal[1]));
+  const locate = !goto && !directPortal && text.match(/^(?:where is|where's|where can i find|how do i get to|how do i open|how do i find) (?:the |my )?(.+)$/);
+  const named = (goto && pageNamed(goto[1])) || (directPortal && pageNamed(directPortal[1])) || (locate && pageNamed(locate[1]));
   if (named) return allowed(named, context.role)
     ? { href: named.path, reply: `Opening ${named.label}.` }
     : { reply: 'That page is not available for your portal role.' };

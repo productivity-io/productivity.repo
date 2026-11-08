@@ -282,3 +282,44 @@ test('literal search data is never typo-corrected or split into commands', () =>
   const special = recognizePortalCommand('Search books for "delete" and http://example.invalid', context);
   assert.equal(new URL(special!.action!.href!, 'https://portal.example').searchParams.get('echo_search'), '"delete" and http://example.invalid');
 });
+
+test('polite, location and natural lead-ins reach the same registered routes', () => {
+  const cases: [string, string][] = [
+    ['hey echo, can you take me to the dashboard', '/dashboard'],
+    ['could you pull up attendance', '/attendance'],
+    ['where is the library', '/library'],
+    ["where's the calender", '/calendar'],
+    ['how do i get to examinations', '/examinations'],
+    ['i wana see my marks', '/examinations'],
+    ['let me see the timetable', '/timetable'],
+    ['bring up my assignments', '/assignments'],
+    ['display my profile', '/profile'],
+  ];
+  for (const [phrase, path] of cases) {
+    const result = recognizePortalCommand(phrase, context);
+    assert.equal(result?.confidence, 'high', phrase);
+    assert.equal(result?.action?.href, path, phrase);
+  }
+});
+
+test('politeness does not turn ordinary questions into navigation', () => {
+  for (const phrase of ['can you explain attendance?', 'could you tell me how leave works', 'where is my attendance percentage', 'what is the library policy']) {
+    const result = recognizePortalCommand(phrase, context);
+    assert.equal(result, null, phrase);
+  }
+});
+
+test('ordinary prose containing and/or never becomes a failed command', () => {
+  for (const phrase of ['I am tired and stressed today', 'tea or coffee would be nice', 'my sister and I walked home', 'the library is quiet and calm']) {
+    assert.equal(recognizePortalCommand(phrase, context), null, phrase);
+  }
+});
+
+test('explicit compound commands still execute atomically or refuse without partial action', () => {
+  const good = recognizePortalCommand('open calendar then show sports events', context);
+  assert.equal(good?.confidence, 'high');
+  assert.match(good?.action?.href || '', /^\/calendar\?.*echo_category=sports/);
+  const bad = recognizePortalCommand('open attendance and show maths', context);
+  assert.equal(bad?.action, undefined);
+  assert.match(bad?.reply || '', /Nothing was changed/);
+});
