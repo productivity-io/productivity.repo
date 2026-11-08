@@ -141,7 +141,7 @@ Residual, pre-existing or architectural:
 ## Git and publication state
 
 Implementation commit: `b75442f45a37087dd1c5b904b3d5e2646cac532d`, pushed to
-`origin/main` with documentation commit `a2f5f09` (based on `f817306`).
+`origin/main` with follow-up documentation commits (based on `f817306`).
 
 Vercel did **not** publish the push. Three minutes after pushing, production
 still served the old asset, `/api/echo/provider` returned 404, and GitHub showed
