@@ -9,6 +9,7 @@ import {
   sessionSecretIssue,
   verifySessionToken,
 } from '../server/utils/auth.ts';
+import { isProductionPortal } from '../server/utils/portalMode.ts';
 
 const dev = { NODE_ENV: 'test' } as const;
 const prod = { NODE_ENV: 'production' } as const;
@@ -78,4 +79,12 @@ test('signed portal sessions verify and reject tampering', () => {
   assert.equal(verifySessionToken(token + '.extra'), null);
   assert.equal(verifySessionToken(token.slice(0, -1)), null);
   assert.equal(verifySessionToken('not-a-token'), null);
+});
+
+test('portal mode: distinguishes production from dev and supports PORTAL_DEMO_MODE override', () => {
+  assert.equal(isProductionPortal({ NODE_ENV: 'test' }), false);
+  assert.equal(isProductionPortal({ NODE_ENV: 'production' }), true);
+  assert.equal(isProductionPortal({ VERCEL: '1' }), true);
+  assert.equal(isProductionPortal({ VERCEL: '1', PORTAL_DEMO_MODE: 'true' }), false);
+  assert.equal(isProductionPortal({ NODE_ENV: 'production', PORTAL_DEMO_MODE: 'false' }), true);
 });
