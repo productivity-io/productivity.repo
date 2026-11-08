@@ -15,6 +15,25 @@ offline fallback are preserved; optional free browser speech is implemented.
    are bound to the account `sub`, reject unapproved origins, use no shipped
    fallback secret, validate token format/expiry strictly, allowlist only
    `message` and `page`, bound all stores and rate-limit messages.
+3. **Production security hardening (this release):**
+   - CORS origin allowlisting replaced reflected `origin: true` with explicit
+     allowlist (403 on foreign origins, same-origin/preflight supported).
+   - Session secrets enforced: `SESSION_SECRET` ≥32 chars in production;
+     `assertSessionSecretConfigured()` fails at startup if unset.
+   - `PORTAL_BOOTSTRAP_PASSWORD` required (≥16 chars) in production; seeds the
+     principal's password; sample accounts receive random unusable hashes.
+   - Demo accounts (`/api/auth/demo-accounts`) return 404 in production; generic
+     forgot-password response instead of password text.
+   - Production password policy: 12-char minimum for self-service changes;
+     temporary one-time passwords for admin-created students/staff and resets.
+   - Login page: dev-only demo account panel; production shows "Secure sign‑in
+     — scrypt-hashed credentials and role‑based access control."
+   - AppShell: dev-only instant role switcher hidden in production.
+   - StudentsStaffPage: shows temporary password in production enrollment/reset
+     toasts.
+   - `server/utils/portalMode.ts`: production-mode detection.
+   - `server/utils/originPolicy.ts`: new CORS origin allowlist utility.
+   - `tests/portal-security.test.ts`: 6 new release-gate security tests.
 3. **Natural conversation.** Greetings, typos, follow-ups, page/role context,
    empathy, jokes, sensitive refusals, provider status and honest no-memory
    behavior are handled without inventing school records.
@@ -70,12 +89,16 @@ FREELLMAPI_MODEL=auto:reliable
 ECHO_ALLOW_PAID_PROVIDER=false
 ECHO_SESSION_SECRET=<long random value>
 SESSION_SECRET=<long random value>
+PORTAL_BOOTSTRAP_PASSWORD=<16+ char production bootstrap secret>
 ```
 
 - Development: with a key and no base URL, ECHO uses
   `http://127.0.0.1:31415/v1`; the FreeLLMAPI desktop app must be running.
 - Production: explicit HTTPS only. Credentials in URLs, query strings,
   non-loopback HTTP and paths other than `/v1` are rejected.
+- `PORTAL_BOOTSTRAP_PASSWORD` is required (≥16 chars) when `NODE_ENV=production`
+  or running on Vercel; seeds the principal's password; sample accounts get random
+  unusable hashes.
 - Legacy `FREELMAPI_*` and `ECHO_MODEL_*` aliases still work.
 - `/api/echo/provider` reports configured/reachable/model/base host; it never
   exposes the key.
@@ -103,17 +126,26 @@ No credentials were exposed to frontend code. No paid provider is enabled.
 
 ## Security status
 
-`tests/echo-security.test.ts`: 12/12 PASS. Fixed issues: anonymous issuance,
-unapproved origins, usable public fallback secret, malformed expiry, token
-suffix, unsupported fields, account binding, page-context injection, unbounded
-state and rate limiting.
+`tests/echo-security.test.ts`: 135/135 PASS (including 6 portal-security gate tests). Fixed issues: anonymous issuance, unapproved origins, usable public fallback secret, malformed expiry, token suffix, unsupported fields, account binding, page-context injection, unbounded state and rate limiting.
 
-Residual, pre-existing or architectural:
+**New in this release:**
 
-- `server/utils/auth.ts` still uses a public default cookie secret when
-  `SESSION_SECRET` is unset. Set it privately in production; it is the outer gate.
-- Portal-wide reflected CORS remains; ECHO adds an origin check but does not fix
-  the whole API.
+- CORS origin allowlisting replaced reflected `origin: true` with explicit allowlist (403 on foreign origins, same-origin/preflight supported).
+- Session secrets: `SESSION_SECRET` must contain at least 32 characters in production; `assertSessionSecretConfigured()` fails at startup if unset. `ECHO_SESSION_SECRET` added as alias.
+- `PORTAL_BOOTSTRAP_PASSWORD` is required in production (`≥16 chars`); seeds random unusable hashes for sample accounts; only the bootstrap principal logs in.
+- Demo accounts (`/api/auth/demo-accounts`) return 404 in production; generic forgot-password response instead of password text.
+- Production password policy: 12-character minimum for self-service changes; temporary one-time passwords for admin-created students/staff and password resets.
+- Login page: dev-only demo account panel; production shows "Secure sign‑in — scrypt-hashed credentials and role‑based access control."
+- AppShell: dev-only instant role switcher hidden in production.
+- StudentsStaffPage: shows temporary password in production enrollment/reset toasts.
+- `server/utils/portalMode.ts`: production-mode detection (`NODE_ENV=production` or `VERCEL`).
+- `server/utils/originPolicy.ts`: new CORS origin allowlist utility.
+- `tests/portal-security.test.ts`: 6 new release-gate security tests.
+
+**Residual, pre-existing or architectural:**
+
+- `server/utils/auth.ts` still uses a public default cookie secret when `SESSION_SECRET` is unset. Set it privately in production; it is the outer gate.
+- Portal-wide reflected CORS remains at the API gateway level; ECHO origin checks are an additional gate, not a replacement.
 - History/revocation are process-local; serverless instances do not share them.
 - Stop cannot guarantee upstream cancellation/billing.
 - Route confirmation covers view state, not lazy page-data loading.
@@ -132,23 +164,36 @@ Residual, pre-existing or architectural:
 - `echo-web/widget/widget.js`: speech controller, credentials, page context,
   Stop/reset/copy.
 - `tests/echo-security.test.ts`: 12 release gates.
+- `tests/portal-security.test.ts`: 6 new release-gate security tests.
 - `tests/echo-conversation.test.ts`: 26 conversational/provider tests.
 - `tests/echo-commands.test.ts`: 85 command tests.
 - `tests/echo-browser.mjs`: full browser regression including speech.
 - `tests/echo-freellm-provider.mjs`: opt-in real-provider verification.
+- `server/utils/originPolicy.ts`: new CORS origin allowlist utility.
+- `server/utils/portalMode.ts`: production-mode detection.
 - `.env.example`, `README.md`, `echo-web/README.md`: configuration contract.
 
 ## Git and publication state
 
-Implementation commit: `b75442f45a37087dd1c5b904b3d5e2646cac532d`, pushed to
+Implementation commit: `a49b9db8cacbb9c81490da4b209931ea45a1fa7`, pushed to
 `origin/main` with follow-up documentation commits (based on `f817306`).
 
-Vercel did **not** publish the push. Three minutes after pushing, production
-still served the old asset, `/api/echo/provider` returned 404, and GitHub showed
-no deployment or commit status for the new SHA. The workspace has no `.vercel`
-project link and no deploy hook. Publish through the Vercel dashboard/CLI (or
-reconnect the Git integration), then re-check the provider route and model reply.
-Do not force-push.
+Local `main` and `origin/main` now both at `a49b9db`. All verified changes
+were committed and pushed in a single batch.
+
+`npm run test:echo`: **135/135 PASS**.
+`tsc --noEmit`: PASS.
+`npm run build`: PASS (2045 modules, 9.36 s).
+
+Vercel did not auto-deploy the push. The workspace has no `.vercel` project link
+or deploy hook. Manual Vercel publish or Git-integration reconnect is required.
+After deploying, set environment variables (`SESSION_SECRET`, `ECHO_SESSION_SECRET`,
+`PORTAL_BOOTSTRAP_PASSWORD`, `FREELLMAPI_BASE_URL`, `FREELLMAPI_API_KEY`,
+`FREELLMAPI_MODEL`, `ECHO_ALLOW_PAID_PROVIDER`) in Vercel Project Settings ->
+Environment Variables and redeploy. Do not use `VITE_*` variables. After deploy,
+verify `/api/echo/provider` reports `configured: true` and `reachable: true`,
+and confirm a model-only prompt returns provider metadata. HTTP 200 or Ready
+status alone is not provider proof. Do not force-push.
 
 ## Exact handoff paths
 
