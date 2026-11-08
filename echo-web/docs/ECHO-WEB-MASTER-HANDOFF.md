@@ -140,11 +140,11 @@ Residual, pre-existing or architectural:
 
 ## Git and publication state
 
-Work was developed on local `main` after fast-forwarding to `f817306`; all
-changes were uncommitted when this handoff was drafted. The exact implementation
-commit is recorded in `git log -1` after the commit; this document is updated in
-the follow-up documentation commit. Do not force-push. Remote `origin/main` and
-the Vercel deployment must be re-checked after pushing.
+Implementation commit: `b75442f45a37087dd1c5b904b3d5e2646cac532d` on local
+`main`, based on `f817306`. This documentation follow-up records that hash and
+refreshes the PDF. Do not force-push. Remote `origin/main` and the Vercel
+deployment must be re-checked after pushing; the previous deployment was still
+the old build without a provider.
 
 ## Exact handoff paths
 
