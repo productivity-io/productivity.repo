@@ -311,10 +311,16 @@ status alone is not provider proof. Do not force-push.
 
 1. **Authorized data retrieval.** No `get_authorized_*` tools exist. The portal
 API is read-only for the signed-in account and there is no documented grade
-projection feature, so ECHO must not invent one. Any future tool layer must
-reuse `req.auth`, scope by account, and keep model context free of raw records.
-The likely sources are the existing authenticated routes (attendance, assignments
-and timetable for the signed-in student) rather than a new data store.
+projection feature, so ECHO must not invent one. Concrete starting point:
+`GET /api/attendance` (`server/index.ts` ~line 930) and `GET /api/assignments`
+(~line 1200) already branch on `req.currentUser!.role`; the student branch
+returns only that student's own records, while the staff branch returns every
+student's rows. A future tool layer should call the same queries server-side, key
+by `req.auth`/session `sub`, and pass the model only aggregates (counts, rates,
+due dates) - never names or raw staff-visible rows - because model prompts leave
+the server. There is no tool-calling loop in `server/services/echoConversation.ts`
+today, and it cannot be verified here: `test:echo:provider` needs the FreeLLMAPI
+desktop gateway, which is not reachable in this environment.
 2. **Charts/tables in the workspace.** `recharts` is already a dependency, but
 ECHO renders text only. Structured results need server-validated payloads first,
 and only where real supported data exists.
