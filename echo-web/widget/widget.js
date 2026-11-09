@@ -330,6 +330,24 @@
     }
   }
   host.addEventListener("echo-widget:refresh-context", refreshContext);
+  // A server-reply action is only a request. The trusted host page validates it, moves the
+  // router and confirms the observed route; this widget never claims a page opened by itself.
+  async function runHostAction(action) {
+    if (!action || action.type !== "navigate" || typeof action.path !== "string" || action.path.length > 100) return;
+    const request = { action };
+    status.textContent = "Opening page…";
+    try {
+      host.dispatchEvent(new CustomEvent("echo-widget:action", { bubbles: true, detail: request }));
+      const result = request.resultPromise ? await request.resultPromise : request.result;
+      const text = typeof result === "string" && result.length <= 4000
+        ? result
+        : "I couldn’t confirm that the page opened. Please use the portal navigation and try again.";
+      bubble("assistant", text);
+      speech.feed(text, true);
+    } catch {
+      bubble("assistant", "I couldn’t confirm that the page opened. Please use the portal navigation and try again.");
+    }
+  }
   function updateStop() {
     stop.hidden = !(busy || speech.speaking);
   }
@@ -469,6 +487,7 @@
       const decoder = new TextDecoder();
       let buffer = "";
       let complete = false;
+      let action = null;
       for (;;) {
         const chunk = await reader.read();
         if (chunk.done) break;
@@ -486,6 +505,7 @@
           if (kind === "done") {
             complete = true;
             speech.flush();
+            if (data.action) action = data.action;
             if (data.references?.length) {
               const references = document.createElement("span");
               references.className = "references";
@@ -498,6 +518,7 @@
       }
       if (!complete) throw new Error("Connection ended before the reply was complete.");
       addCopy(answer);
+      if (action) await runHostAction(action);
       status.textContent = "Ready.";
     } catch (error) {
       speech.cancel();

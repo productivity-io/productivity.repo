@@ -1,9 +1,44 @@
 # ECHO to Veritas - Master Handoff
 
-Updated: 2026-11-08. Local branch: `main`, based on `f817306` (remote
-`origin/main` was `50f1949` before this work). FreeLLMAPI is ECHO's verified
-primary conversational provider; deterministic commands, security gates and
-offline fallback are preserved; optional free browser speech is implemented.
+Updated: 2026-11-09. Local branch: `main`, based on `9d761e6`. FreeLLMAPI is
+ECHO's verified primary conversational provider; deterministic commands,
+security gates and offline fallback are preserved; optional free browser speech
+is implemented. Phase 1 (conversational follow-up navigation) is complete and
+verified end to end.
+
+## Phase 1 - conversational follow-up navigation (2026-11-09)
+
+The reported defect: after ECHO explained a page and offered to open it, an
+acceptance such as "okay take me there" only produced more prose. Returning text
+is not navigation, so the flow was rebuilt around a structured action.
+
+Implemented:
+
+1. **Structured offer lifecycle (server).** An offer is stored per ECHO session
+   with its action ID, path and label, bound to the account `sub` and the role,
+   and expiring after 60 s. `server/services/echo.ts` owns the store; revocation
+   (logout / New chat) deletes it.
+2. **Deterministic acceptance before the provider.** Cancellation, explicit
+   replacement ("actually, open assignments instead") and deictic acceptance
+   ("take me there", "open it", "yes please", "show me", "go there",
+   "let's do that", "alright") are resolved before any FreeLLMAPI call, so the
+   primary brain cannot answer them as fresh conversation.
+3. **Only offered pages become pending.** The pending action is registered only
+   when the displayed reply names exactly one allowlisted page (or uses the
+   canonical "say open X and I'll take you there" offer). Two destinations yield
+   a clarification, never a guess. Offers can only come from the fixed topic
+   allowlist, never from model-generated URLs.
+4. **Verification, not claims.** The `done` SSE event now carries
+   `action: { type: 'navigate', actionId, path, label }`. The widget forwards it
+   via `echo-widget:action`; `EchoAssistant` re-validates the path against
+   `ECHO_PAGES` and the current role, moves the real router, and confirms only
+   after both the React location and `window.location` match. Failures say so.
+5. **Client deferral.** `EchoCommandSession` now exposes `hasPending`, and bare
+   follow-ups bypass local recognition (which previously answered "could not
+   match") whenever no local confirmation is active.
+6. **Invalidation.** Offers expire after 60 s, are cleared by cancellation, by a
+   different destination, by executing, by an unrelated reply, by a role change,
+   by a second account, and by logout/reset.
 
 ## What changed
 
@@ -66,11 +101,20 @@ Command: `ECHO_USE_DESKTOP_SETTINGS=true node tests/echo-freellm-provider.mjs`.
 
 | Check | Result |
 | --- | --- |
-| 129 unit tests: config, commands, conversation, security | PASS |
+| 149 unit/integration tests: config, commands, conversation, navigation, security | PASS |
 | `tsc --noEmit` | PASS |
-| production `vite build` | PASS, 9.1 s |
+| production `vite build` | PASS |
 | full browser regression | PASS |
-| live FreeLLMAPI provider test | PASS |
+| live FreeLLMAPI provider test | PASS (previous release; not rerun here) |
+
+`tests/echo-navigation.test.ts` (new) drives the real router and asserts the
+`done.action` lifecycle: offer-then-accept, `open it`, `yes please`, `show me`,
+no-pending ambiguity, cancellation, 60 s expiry, explicit replacement, role
+change, session isolation, logout revocation, cross-account rejection and
+provider bypass. `tests/echo-browser.mjs` adds a real built-in-engine browser
+run (real widget, cookie session, real router) proving the URL changes from
+`/assignments` to `/attendance` only after acceptance, plus a forced
+`history.pushState` mismatch that must report "could not confirm".
 
 Browser coverage includes login, typo commands, verified navigation feedback,
 context help, clipboard success/failure, Stop/reset/error recovery, speech
@@ -163,6 +207,9 @@ No credentials were exposed to frontend code. No paid provider is enabled.
   commands, atomic plans, prose guards.
 - `echo-web/widget/widget.js`: speech controller, credentials, page context,
   Stop/reset/copy.
+- `tests/echo-navigation.test.ts`: 14 Phase 1 navigation lifecycle tests.
+- `src/components/EchoAssistant.tsx`: `echo-widget:action` handler (allowlist,
+  role check, router execution, observed-route confirmation).
 - `tests/echo-security.test.ts`: 12 release gates.
 - `tests/portal-security.test.ts`: 6 new release-gate security tests.
 - `tests/echo-conversation.test.ts`: 26 conversational/provider tests.

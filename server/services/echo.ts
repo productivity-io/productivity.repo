@@ -1,6 +1,22 @@
 import crypto from 'node:crypto';
 import { Router, Request, Response } from 'express';
-import { buildEchoReply, generateProviderReply, LOCAL_PROVIDER, rememberProviderUsage } from './echoConversation.js';
+import {
+  attachNavigationOffer,
+  buildEchoReply,
+  explicitNavigationDestination,
+  generateProviderReply,
+  isNavigationCancellation,
+  isNavigationFollowUp,
+  LOCAL_PROVIDER,
+  navigationAcceptedReply,
+  navigationActionForTopic,
+  navigationCancelledReply,
+  navigationExpiredReply,
+  navigationOfferFor,
+  NAVIGATION_OFFER_TTL_MS,
+  rememberProviderUsage,
+} from './echoConversation.js';
+import type { EchoNavigationAction, EchoReply, NavigationOffer } from './echoConversation.js';
 
 export type EchoWidgetConfig =
   | { enabled: false }
@@ -98,6 +114,8 @@ export interface EchoRouterOptions {
   /** Secure by default: without an authenticator, every session endpoint denies access. */
   authenticate?: (req: Request) => EchoIdentity | null;
   allowedOrigins?: readonly string[];
+  /** Deterministic clock for expiry tests. */
+  now?: () => number;
 }
 
 /**
@@ -128,6 +146,37 @@ function rememberSession(sid: string, history: Array<{ user: string; assistant: 
   sessionHistory.set(sid, history);
 }
 
+/**
+ * Navigation ECHO actually offered, awaiting the user's acceptance. Bound to the session, the
+ * account and the role that were current when it was offered, and short-lived by design.
+ */
+type PendingNavigation = {
+  offer: NavigationOffer;
+  action: EchoNavigationAction;
+  sub: string;
+  role: EchoIdentity['role'];
+  exp: number;
+};
+
+const pendingNavigation = new Map<string, PendingNavigation>();
+
+function rememberPendingNavigation(sid: string, pending: PendingNavigation) {
+  if (!pendingNavigation.has(sid) && pendingNavigation.size >= MAX_SESSIONS) {
+    const oldest = pendingNavigation.keys().next().value;
+    if (oldest !== undefined) pendingNavigation.delete(oldest);
+  }
+  pendingNavigation.set(sid, pending);
+}
+
+/** Takes the offer only if it is unexpired and still belongs to this exact identity. */
+function takePendingNavigation(sid: string, identity: EchoIdentity, now: number): PendingNavigation | null {
+  const pending = pendingNavigation.get(sid);
+  if (!pending) return null;
+  pendingNavigation.delete(sid);
+  if (pending.exp <= now || pending.sub !== identity.sub || pending.role !== identity.role) return null;
+  return pending;
+}
+
 function revokeSession(sid: string) {
   if (revokedSessionIds.size >= MAX_REVOKED) {
     const oldest = revokedSessionIds.values().next().value;
@@ -135,6 +184,7 @@ function revokeSession(sid: string) {
   }
   revokedSessionIds.add(sid);
   sessionHistory.delete(sid);
+  pendingNavigation.delete(sid);
 }
 
 function allowMessage(sub: string): boolean {
@@ -231,6 +281,7 @@ export function createEchoServiceRouter(options: EchoRouterOptions = {}): Router
   const router = Router();
   const authenticate = options.authenticate ?? (() => null);
   const extraOrigins = options.allowedOrigins ?? [];
+  const clock = options.now ?? (() => Date.now());
 
   router.use((req: Request, res: Response, next) => {
     res.setHeader('Cache-Control', 'no-store');
@@ -373,9 +424,50 @@ export function createEchoServiceRouter(options: EchoRouterOptions = {}): Router
         role: identity.role,
         page: typeof body.page === 'string' ? body.page : undefined,
       };
-      const providerReply = await generateProviderReply(message, history, context, abortController.signal).catch(() => null);
-      const reply = providerReply || { ...buildEchoReply(message, history, context), provider: LOCAL_PROVIDER };
+      const now = clock();
+
+      // Navigation lifecycle runs before any provider call. A follow-up such as "okay, take me
+      // there" must execute the action ECHO offered, never be re-answered as fresh conversation.
+      let reply: EchoReply | null = null;
+      if (isNavigationCancellation(message) && pendingNavigation.has(session.sid)) {
+        pendingNavigation.delete(session.sid);
+        reply = navigationCancelledReply();
+      }
+      if (!reply) {
+        const destination = explicitNavigationDestination(message);
+        const destinationAction = destination ? navigationActionForTopic(destination.topicId) : null;
+        if (destinationAction) {
+          pendingNavigation.delete(session.sid);
+          reply = navigationAcceptedReply(destinationAction);
+        }
+      }
+      if (!reply && pendingNavigation.has(session.sid) && isNavigationFollowUp(message)) {
+        const pending = takePendingNavigation(session.sid, identity, now);
+        reply = pending ? navigationAcceptedReply(pending.action) : navigationExpiredReply();
+      }
+
+      if (!reply) {
+        const providerReply = await generateProviderReply(message, history, context, abortController.signal).catch(() => null);
+        const localReply = providerReply ? null : { ...buildEchoReply(message, history, context), provider: LOCAL_PROVIDER };
+        reply = attachNavigationOffer(providerReply || localReply!, message);
+      }
       if (!reply.provider || reply.provider.id === 'local-guidance') rememberProviderUsage(LOCAL_PROVIDER);
+
+      // Only an action actually offered in the displayed reply becomes pending. Executing an
+      // action clears the offer; an unrelated reply invalidates a stale one.
+      if (reply.action) {
+        pendingNavigation.delete(session.sid);
+      } else {
+        const offer = navigationOfferFor(reply.text);
+        const action = offer ? navigationActionForTopic(offer.topicId) : null;
+        if (offer && action) {
+          rememberPendingNavigation(session.sid, {
+            offer, action, sub: identity.sub, role: identity.role, exp: now + NAVIGATION_OFFER_TTL_MS,
+          });
+        } else {
+          pendingNavigation.delete(session.sid);
+        }
+      }
 
       history.push({ user: message, assistant: reply.text });
       if (history.length > 10) history.splice(0, history.length - 10);
@@ -406,7 +498,8 @@ export function createEchoServiceRouter(options: EchoRouterOptions = {}): Router
       }
 
       if (!res.writableEnded && !res.destroyed) {
-        res.end(`event: done\ndata: ${JSON.stringify({ references: reply.references })}\n\n`);
+        // A structured action is the only way ECHO moves the router; the host re-validates it.
+        res.end(`event: done\ndata: ${JSON.stringify({ references: reply.references, action: reply.action })}\n\n`);
       }
     } catch {
       if (!res.writableEnded && !res.destroyed) {

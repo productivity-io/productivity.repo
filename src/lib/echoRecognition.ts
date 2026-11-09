@@ -179,6 +179,7 @@ export function recognizePortalCommand(message: string, context: CommandContext)
 export class EchoCommandSession {
   private pending?: { choices: Choice[]; scope: string; at: number };
   constructor(private readonly now = () => Date.now()) {}
+  get hasPending() { return this.pending !== undefined; }
   reset() { this.pending = undefined; }
   resolve(message: string, context: CommandContext & { academicYear?: string }): Recognition | null {
     const scope = JSON.stringify([context.path, context.search, context.role, context.academicYear, context.academicYears, context.subjects]);

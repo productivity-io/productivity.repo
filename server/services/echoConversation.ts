@@ -15,7 +15,17 @@ export type EchoProviderInfo = {
   route?: string;
   fallback: boolean;
 };
-export type EchoReply = { text: string; references: Array<{ title: string }>; provider?: EchoProviderInfo };
+/**
+ * A read-only navigation the authenticated browser may execute. Paths come only from the
+ * server's own allowlist, never from model output, and the host page re-validates role.
+ */
+export type EchoNavigationAction = { type: 'navigate'; actionId: string; path: string; label: string };
+export type EchoReply = {
+  text: string;
+  references: Array<{ title: string }>;
+  provider?: EchoProviderInfo;
+  action?: EchoNavigationAction;
+};
 export type EchoContext = {
   name?: string;
   role?: EchoIdentity['role'];
@@ -36,6 +46,7 @@ type Topic = {
   summary: string;
   extra: string;
   command?: string;
+  path?: string;
 };
 
 const TOPICS: readonly Topic[] = [
@@ -46,6 +57,7 @@ const TOPICS: readonly Topic[] = [
     summary: 'Attendance is in the Attendance module, with daily logs, subject-wise percentages and a Corrections tab if an entry looks wrong.',
     extra: 'For a correction, open the Corrections tab, pick the date, add a short reason and submit. A teacher or coordinator reviews it — I can take you there, but I can’t change the record myself.',
     command: 'open attendance',
+    path: '/attendance',
   },
   {
     id: 'assignments',
@@ -54,6 +66,7 @@ const TOPICS: readonly Topic[] = [
     summary: 'Assignments is where homework, due dates, attachments and submission status live. You can submit text or files and follow each item from Assigned to Submitted to Graded.',
     extra: 'Overdue work stays visible until it’s graded, and your teacher’s remarks appear on the submission. I can also filter the current view to overdue work.',
     command: 'open assignments',
+    path: '/assignments',
   },
   {
     id: 'timetable',
@@ -62,6 +75,7 @@ const TOPICS: readonly Topic[] = [
     summary: 'The Timetable module has weekly and daily schedules, rooms, faculty names, break periods, and any substitutions or cancelled classes.',
     extra: 'Substitutions show inline on the period, and the daily view is the easiest one on a phone. Say “show Monday timetable” and I’ll switch the view for you.',
     command: 'open timetable',
+    path: '/timetable',
   },
   {
     id: 'exams',
@@ -70,6 +84,7 @@ const TOPICS: readonly Topic[] = [
     summary: 'Examinations holds subject-wise marks, the exam schedule and printable report cards.',
     extra: 'Results is the default tab, and Report Card opens the printable term view. I can jump you to either one — I just can’t view or edit a private mark.',
     command: 'open examinations',
+    path: '/examinations',
   },
   {
     id: 'leave',
@@ -78,6 +93,7 @@ const TOPICS: readonly Topic[] = [
     summary: 'Leave Requests is where you apply: choose start and end dates, pick a leave type, attach supporting documents if you have them, then submit.',
     extra: 'Teachers, coordinators and the Principal review pending requests and add remarks. You can track the status in the same module.',
     command: 'open leave requests',
+    path: '/leave-requests',
   },
   {
     id: 'library',
@@ -86,6 +102,7 @@ const TOPICS: readonly Topic[] = [
     summary: 'The Library module searches the catalogue by title, author, category or ISBN, and shows rack locations plus your issue history and due dates.',
     extra: 'If a book is already out, the issue history shows its due date and return status. Renewals and fines go through the library desk.',
     command: 'open library',
+    path: '/library',
   },
   {
     id: 'announcements',
@@ -94,6 +111,7 @@ const TOPICS: readonly Topic[] = [
     summary: 'Announcements carries school circulars, academic updates, event notices and emergency alerts. Unread items are easy to isolate.',
     extra: 'Coordinator notices go through Principal approval, and emergency alerts appear at the top of the portal.',
     command: 'open announcements',
+    path: '/announcements',
   },
   {
     id: 'transport',
@@ -102,6 +120,7 @@ const TOPICS: readonly Topic[] = [
     summary: 'Transport shows your bus, route, morning and afternoon timings, stops, and driver or attendant contacts.',
     extra: 'There’s also a form for reporting delays or route issues.',
     command: 'open transport',
+    path: '/transport',
   },
   {
     id: 'portfolio',
@@ -110,6 +129,7 @@ const TOPICS: readonly Topic[] = [
     summary: 'Portfolio is your record of awards, projects, sports and cultural achievements, skills and teacher feedback, with a print/export view.',
     extra: 'Students can add new entries and faculty verify them afterwards.',
     command: 'open portfolio',
+    path: '/portfolio',
   },
   {
     id: 'communication',
@@ -118,6 +138,7 @@ const TOPICS: readonly Topic[] = [
     summary: 'Communication is for requesting a conversation with a teacher or coordinator, Contacts is the staff directory, and Lost & Found handles campus items.',
     extra: 'Messages unlock once the other person accepts your request. Lost & Found also takes claim requests.',
     command: 'open communication',
+    path: '/communication',
   },
   {
     id: 'calendar',
@@ -126,6 +147,7 @@ const TOPICS: readonly Topic[] = [
     summary: 'Calendar & Events collects competitions, cultural events, exams, holidays, deadlines and personal entries.',
     extra: 'You can filter the calendar by category, for example “show sports events”.',
     command: 'open calendar',
+    path: '/calendar',
   },
   {
     id: 'dashboard',
@@ -134,6 +156,7 @@ const TOPICS: readonly Topic[] = [
     summary: 'The Dashboard is your at-a-glance view: attendance rate, pending work, academic standing, notices and today’s timetable.',
     extra: 'Each card links into the full module when you need the detail.',
     command: 'open dashboard',
+    path: '/dashboard',
   },
   {
     id: 'privacy',
@@ -142,6 +165,7 @@ const TOPICS: readonly Topic[] = [
     summary: 'I can’t view or change private records — marks, attendance entries, messages, passwords or anyone’s account. Those changes go through school staff.',
     extra: 'For a password or profile change, open Profile or contact IT support. For an academic correction, use the module’s own request flow.',
     command: 'open profile',
+    path: '/profile',
   },
 ];
 
@@ -268,6 +292,120 @@ function historyTopic(history: EchoTurn[]): Topic | null {
     if (fromAssistant) return fromAssistant.topic;
   }
   return null;
+}
+
+/**
+ * Conversational navigation lifecycle.
+ *
+ * A navigation is only ever offered from this fixed topic allowlist. The server holds the offer
+ * (bound to the session, account and role) until the user accepts it, then returns a structured
+ * action that the authenticated browser must execute and verify. Plain reply text never moves
+ * the router by itself.
+ */
+export const NAVIGATION_OFFER_TTL_MS = 60_000;
+export type NavigationOffer = { topicId: string; actionId: string };
+
+/** Deictic acceptance of an offer ECHO actually made. Never a data-changing instruction. */
+export function isNavigationFollowUp(rawMessage: string): boolean {
+  const text = tidy(rawMessage).replace(/^(?:ok|okay|alright|so|and)\s+/, '');
+  if (!text) return false;
+  if (/\b(?:no|not|cancel|never ?mind|forget it|stop|don'?t)\b/.test(text)) return false;
+  if (/^(?:yes|yeah|yep|yup|sure|ok|okay|alright|please|go ahead|do it|proceed|agreed|sounds good|that(?:'s| is) fine)(?:\s+(?:please|then|thanks|thank you))?$/.test(text)) return true;
+  return /\b(?:take|bring|get|lead|walk|show)\s+me\s+(?:there|to it)\b/.test(text)
+    || /\b(?:open|show|go|take|view|pull up|bring up|jump to|head to)\s+(?:it|that|this)\b/.test(text)
+    || /\b(?:go|head|jump)\s+there\b/.test(text)
+    || /\blet(?:'s| us)\s+(?:do|open|go\s+with|see)\s+(?:that|it)\b/.test(text)
+    || /^(?:show|open)\s+(?:me|it|that)$/.test(text);
+}
+
+/** Clearly withdrawing an offer, so an ambiguous "okay" can never revive it. */
+export function isNavigationCancellation(rawMessage: string): boolean {
+  return /^(?:no|nope|nah|cancel|never ?mind|forget it|not now|stop)(?:\s+(?:no|cancel|thanks|thank you|that|it))*$/.test(tidy(rawMessage));
+}
+
+/** The only paths ECHO may ask the browser to open. */
+export function navigationActionForTopic(topicId: string): EchoNavigationAction | null {
+  const topic = TOPICS.find(item => item.id === topicId);
+  if (!topic?.path || !topic.command) return null;
+  return {
+    type: 'navigate',
+    actionId: 'nav:' + topic.path.replace(/^\//, ''),
+    path: topic.path,
+    label: PAGE_LABELS[topic.path] || topic.title,
+  };
+}
+
+/** "Actually, open assignments instead" replaces the offer with that single allowlisted page. */
+export function explicitNavigationDestination(rawMessage: string): { topicId: string } | null {
+  const match = normalize(rawMessage).match(
+    /^(?:actually\s+|instead\s+|no\s+)?(?:open|show|take me to|go to|navigate to|bring up|pull up|switch to)\s+(?:the\s+|my\s+)?(.+?)(?:\s+instead)?$/,
+  );
+  const destination = match?.[1]?.trim();
+  if (!destination || destination.length > 60) return null;
+  const topic = bestTopic(destination)?.topic;
+  return topic?.command && topic.path ? { topicId: topic.id } : null;
+}
+
+/**
+ * Detect a navigation ECHO genuinely offered in its own reply. The canonical offer names the
+ * command; a provider may phrase it differently, but then the reply must name exactly one
+ * allowlisted page. Two possible destinations mean "ask for clarification", never a guess.
+ */
+export function navigationOfferFor(replyText: string): NavigationOffer | null {
+  const canonical = replyText.match(/say\s+[“"']?(open\s+[a-z][a-z\s]{1,40}?)[”"']?\s+and\s+i[’']?ll\s+take\s+you\s+there/i);
+  if (canonical) {
+    const command = normalize(canonical[1]);
+    const topic = TOPICS.find(item => item.command && normalize(item.command) === command);
+    const action = topic ? navigationActionForTopic(topic.id) : null;
+    if (topic && action) return { topicId: topic.id, actionId: action.actionId };
+  }
+  if (!/\b(?:want me to take you|shall i take you|i can take you|i(?:'|’)ll take you|would you like me to open|want me to open|take you there)\b/.test(normalize(replyText))) return null;
+  const named = TOPICS.filter(topic => topic.command && topic.path && topicScore(replyText, topic) > 0);
+  if (named.length !== 1) return null;
+  const action = navigationActionForTopic(named[0].id);
+  return action ? { topicId: named[0].id, actionId: action.actionId } : null;
+}
+
+function pageTitleFor(path: string): string {
+  return PAGE_LABELS[path] || 'that page';
+}
+
+/**
+ * Ensure a reply that clearly concerns one allowlisted page actually offers navigation to it.
+ * This keeps the offer honest: the sentence is added to the reply the user sees, and the pending
+ * action is registered from that same text.
+ */
+export function attachNavigationOffer(reply: EchoReply, rawMessage: string): EchoReply {
+  if (!reply.text || reply.action) return reply;
+  if (navigationOfferFor(reply.text)) return reply;
+  const message = tidy(rawMessage);
+  if (!message || message.length > 400) return reply;
+  if (COMMAND.test(message)) return reply;
+  if (/\b(?:delete|remove|erase|change|edit|update|overwrite|approve|reject|submit|send|pay|upload|cancel)\b/.test(message)) return reply;
+  if (/^(?:hi|hello|hey|thanks|thank you|bye|goodbye)\b/.test(message)) return reply;
+  const topic = bestTopic(rawMessage)?.topic;
+  if (!topic?.command || !topic.path) return reply;
+  if (topicScore(reply.text, topic) === 0) return reply;
+  if (reply.text.length > 900) return reply;
+  return { ...reply, text: `${reply.text.trim()} ${commandFor(topic)}`.replace(/\s+/g, ' ').trim() };
+}
+
+export function navigationAcceptedReply(action: EchoNavigationAction): EchoReply {
+  return { text: `Opening ${pageTitleFor(action.path)}.`, references: [{ title: pageTitleFor(action.path) }], action };
+}
+
+export function navigationCancelledReply(): EchoReply {
+  return {
+    text: 'Cancelled — I haven’t changed the page. Tell me where you’d like to go whenever you’re ready.',
+    references: [{ title: 'Portal navigation' }],
+  };
+}
+
+export function navigationExpiredReply(): EchoReply {
+  return {
+    text: 'That page offer has expired, so nothing changed. Name the page — for example “open attendance” — and I’ll take you there.',
+    references: [{ title: 'Portal navigation' }],
+  };
 }
 
 function pick(message: string, options: readonly string[]): string {

@@ -4,7 +4,7 @@ import { useLocation, useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import { apiFetch } from '../lib/api';
 import widgetUrl from '../../echo-web/widget/widget.js?url';
-import { ECHO_PAGES, portalHelp } from '../lib/echoCommands';
+import { allowed, ECHO_PAGES, isNavigationFollowUp, portalHelp } from '../lib/echoCommands';
 import { confirmPortalAction } from '../lib/echoActionFeedback';
 import { EchoCommandSession } from '../lib/echoRecognition';
 import { getEchoSubjects } from '../lib/echoSubjectOptions';
@@ -50,6 +50,9 @@ export function EchoAssistant() {
       const detail = (event as CustomEvent<{ message: string; reply?: string; replyPromise?: Promise<string> }>).detail;
       const state = current.current;
       if (!state.user || state.user.id !== userId || typeof detail?.message !== 'string') return;
+      // A deictic follow-up belongs to the conversation service's own pending offer. Without an
+      // active local confirmation, let it through instead of answering "could not match".
+      if (!commands.hasPending && isNavigationFollowUp(detail.message)) return;
       const recognized = commands.resolve(detail.message, {
         path: state.location.pathname, search: state.location.search, role: state.user.role,
         academicYear: state.academicYear, academicYears: state.academicYears.map(year => year.name),
@@ -89,8 +92,38 @@ export function EchoAssistant() {
         academicYears: state.academicYears.map(year => year.name), subjects: getEchoSubjects(userId),
       });
     };
+    // ECHO may ask to open a page from a server reply. Re-validate the allowlist and role here,
+    // execute through the real router, and only report success after observing the route.
+    const handleAction = (event: Event) => {
+      const host = event.target;
+      const state = current.current;
+      const detail = (event as CustomEvent<{ action?: { type?: string; path?: string }; result?: string; resultPromise?: Promise<string> }>).detail;
+      if (!(host instanceof HTMLElement) || host.dataset.instance !== instance || !detail?.action) return;
+      if (!state.user || state.user.id !== userId) {
+        detail.result = 'Sign in again to use portal navigation.';
+        return;
+      }
+      const { type, path } = detail.action;
+      if (type !== 'navigate' || typeof path !== 'string') {
+        detail.result = 'That action is not supported.';
+        return;
+      }
+      const target = ECHO_PAGES.find(page => page.path === path);
+      if (!target || !allowed(target, state.user.role)) {
+        detail.result = 'That page is not available for your portal role.';
+        return;
+      }
+      flushSync(() => { state.navigate(target.path); });
+      detail.resultPromise = confirmPortalAction(() => {
+        const observed = current.current;
+        return observed.user?.id === userId
+          && observed.location.pathname === target.path
+          && window.location.pathname === target.path;
+      }, `You’re now on ${target.label}.`, controller.signal);
+    };
     document.addEventListener('echo-widget:command', handleCommand);
     document.addEventListener('echo-widget:context', handleContext);
+    document.addEventListener('echo-widget:action', handleAction);
     const handleReset = (event: Event) => {
       if (event.target instanceof HTMLElement && event.target.dataset.instance === instance) commands.reset();
     };
@@ -114,6 +147,7 @@ export function EchoAssistant() {
       disposed = true;
       document.removeEventListener('echo-widget:command', handleCommand);
       document.removeEventListener('echo-widget:context', handleContext);
+      document.removeEventListener('echo-widget:action', handleAction);
       document.removeEventListener('echo-widget:reset', handleReset);
       commands.reset();
       controller.abort();

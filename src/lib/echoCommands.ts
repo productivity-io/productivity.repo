@@ -90,6 +90,22 @@ export function portalHelp(context: Context): { summary: string; suggestions: st
 
 export type PortalCommand = { reply: string; href?: string; back?: boolean; academicYear?: string };
 export const normalize = (text: string) => text.toLowerCase().replace(/_/g, ' ').replace(/\s+/g, ' ').trim();
+
+/**
+ * Deictic acceptance of a page ECHO already offered ("okay, take me there"). The local command
+ * recognizer must defer these to the conversation service, which holds the actual offer.
+ */
+export function isNavigationFollowUp(message: string): boolean {
+  const text = normalize(message.replace(/[’`]/g, "'")).replace(/[.!?]+$/, '').replace(/^(?:ok|okay|alright|so|and)\s+/, '');
+  if (!text) return false;
+  if (/\b(?:no|not|cancel|never ?mind|forget it|stop|don'?t)\b/.test(text)) return false;
+  if (/^(?:yes|yeah|yep|yup|sure|ok|okay|alright|please|go ahead|do it|proceed|agreed|sounds good|that(?:'s| is) fine)(?:\s+(?:please|then|thanks|thank you))?$/.test(text)) return true;
+  return /\b(?:take|bring|get|lead|walk|show)\s+me\s+(?:there|to it)\b/.test(text)
+    || /\b(?:open|show|go|take|view|pull up|bring up|jump to|head to)\s+(?:it|that|this)\b/.test(text)
+    || /\b(?:go|head|jump)\s+there\b/.test(text)
+    || /\blet(?:'s| us)\s+(?:do|open|go\s+with|see)\s+(?:that|it)\b/.test(text)
+    || /^(?:show|open)\s+(?:me|it|that)$/.test(text);
+}
 export const allowed = (page: Page, role: UserRole) => !page.staff || ['teacher', 'coordinator', 'principal'].includes(role);
 const TYPO_MAP: Record<string, string> = {
   attendence: 'attendance',

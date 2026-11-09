@@ -67,7 +67,16 @@ const echo = createServer(async (req, res) => {
   assert.deepEqual(Object.keys(JSON.parse(raw)).sort(), ['message', 'page']);
   assert.ok(typeof page === 'string' && page.startsWith('/'), 'page context must be a portal path');
   res.setHeader('Content-Type', 'text/event-stream');
-  const reply = message === 'follow-up' ? `Previous: ${history.at(-1) || 'none'}` : `ECHO: ${message}`;
+  const lower = message.toLowerCase();
+  // Mirrors the real service: the offer is prose only, and only the acceptance carries an action.
+  const offers = {
+    'where can i see my attendance': 'Attendance is in the Attendance module. If you want, say “open attendance” and I’ll take you there.',
+    'okay take me there': 'Opening Attendance.',
+  };
+  const reply = message === 'follow-up' ? `Previous: ${history.at(-1) || 'none'}` : (offers[lower] || `ECHO: ${message}`);
+  const action = lower === 'okay take me there'
+    ? { type: 'navigate', path: '/attendance', label: 'Attendance', actionId: 'nav:attendance' }
+    : null;
   history.push(message);
   res.write(`event: delta\ndata: ${JSON.stringify({ text: reply.slice(0, 6) })}\n\n`);
   let timer;
@@ -75,7 +84,7 @@ const echo = createServer(async (req, res) => {
   timer = setTimeout(() => {
     if (res.destroyed) return;
     res.write(`event: delta\ndata: ${JSON.stringify({ text: reply.slice(6) })}\n\n`);
-    res.end('event: done\ndata: {"references":[]}\n\n');
+    res.end(`event: done\ndata: ${JSON.stringify({ references: [], action })}\n\n`);
   }, message === 'slow reply' ? 10000 : 200);
 });
 
@@ -363,6 +372,29 @@ try {
   assert.equal(traffic.length, beforeCommands, 'Read-only commands must not call the remote conversation service.');
   assert.ok(portalRequests.slice(beforePortalRequests).every(request => request.method() === 'GET'), 'View commands must not mutate school records.');
   assert.equal(await page.locator('echo-chat-widget').count(), 1);
+  // A server reply may only offer a route; accepting it must move the real router and be verified.
+  await send('Open dashboard');
+  await page.waitForURL('**/dashboard');
+  await send('where can i see my attendance');
+  assert.equal(new URL(page.url()).pathname, '/dashboard', 'an offer alone must not navigate');
+  assert.match(await widget.locator('.assistant').last().textContent(), /take you there/i);
+  await send('okay take me there');
+  await page.waitForURL('**/attendance');
+  assert.equal(new URL(page.url()).pathname, '/attendance');
+  assert.match(await widget.locator('.assistant').last().textContent(), /You’re now on Attendance/);
+  // An unobserved route change must never be reported as a successful navigation.
+  await send('Open dashboard');
+  await page.waitForURL('**/dashboard');
+  await page.evaluate(() => {
+    const original = history.pushState.bind(history);
+    window.restoreEchoActionPushState = () => { history.pushState = original; };
+    history.pushState = (state, unused) => original(state, unused, '/dashboard');
+  });
+  await send('okay take me there');
+  assert.match(await widget.locator('.assistant').last().textContent(), /could not confirm/);
+  await page.evaluate(() => window.restoreEchoActionPushState());
+  await send('Open assignments');
+  await page.waitForURL('**/assignments');
   await send('opn atendnce');
   await widget.getByRole('button', { name: 'New chat', exact: true }).click();
   await widget.locator('.status').filter({ hasText: 'New conversation.' }).waitFor();
@@ -459,6 +491,34 @@ try {
   mkdirSync('artifacts', { recursive: true });
   await page.screenshot({ path: 'artifacts/echo-mobile.png' });
   await page.setViewportSize({ width: 1280, height: 850 });
+  // ---------- Real built-in engine: unexplained follow-up actually moves the router ----------
+  // Point the same widget at the portal's own authenticated ECHO service (cookie session), so
+  // this exercises the shipped pending-offer lifecycle rather than the fake transport above.
+  await page.route('**/api/echo/config', route => route.fulfill({ json: { enabled: true, siteId: 'productivity-portal', apiBaseUrl: '/api/echo' } }));
+  await page.reload();
+  await widget.locator('.launcher').waitFor();
+  await widget.locator('.launcher').click();
+  await page.waitForFunction(() => {
+    const host = document.querySelector('echo-chat-widget');
+    return host && !host.shadowRoot.querySelector('textarea').disabled;
+  });
+  const beforeRealEngine = new URL(page.url()).pathname;
+  await send('Where can I see my attendance?');
+  assert.equal(new URL(page.url()).pathname, beforeRealEngine, 'the offer itself must not navigate');
+  assert.match(await widget.locator('.assistant').last().textContent(), /Attendance/);
+  await send('okay take me there');
+  await page.waitForURL('**/attendance');
+  assert.equal(new URL(page.url()).pathname, '/attendance', 'accepted offer must change the real route');
+  assert.match(await widget.locator('.assistant').last().textContent(), /You’re now on Attendance/);
+  await page.unroute('**/api/echo/config');
+  // Restore the mock-backed widget for the remaining stop/reset/speech checks.
+  await page.reload();
+  await widget.locator('.launcher').waitFor();
+  await widget.locator('.launcher').click();
+  await page.waitForFunction(() => {
+    const host = document.querySelector('echo-chat-widget');
+    return host && !host.shadowRoot.querySelector('textarea').disabled;
+  });
   await widget.locator('textarea').fill('slow reply');
   await widget.locator('.send').click();
   await widget.locator('.status').filter({ hasText: 'Replying' }).waitFor();
