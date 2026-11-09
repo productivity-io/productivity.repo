@@ -238,17 +238,16 @@ No credentials were exposed to frontend code. No paid provider is enabled.
 - `server/utils/portalMode.ts`: production-mode detection.
 - `.env.example`, `README.md`, `echo-web/README.md`: configuration contract.
 
-## Git and publication state
+## Git and publication statePrevious release commit: `a49b9db8cacbb9c81490da4b209931ea45a1fa7`.
+Phase 1 navigation: `8f1f0fa` (feat(echo): execute offered navigation from
+conversational follow-ups). Phase 2 workspace modes: `e98c21e`
+(feat(echo): add expanded and full-screen workspace modes). Both were committed
+on local `main` from base `9d761e6` and pushed to `origin/main`.
 
-Implementation commit: `a49b9db8cacbb9c81490da4b209931ea45a1fa7`, pushed to
-`origin/main` with follow-up documentation commits (based on `f817306`).
-
-Local `main` and `origin/main` now both at `a49b9db`. All verified changes
-were committed and pushed in a single batch.
-
-`npm run test:echo`: **135/135 PASS**.
+`npm run test:echo`: **149/149 PASS**.
 `tsc --noEmit`: PASS.
-`npm run build`: PASS (2045 modules, 9.36 s).
+`npm run build`: PASS (2045 modules).
+`npm run test:echo:browser`: PASS, including the real built-in engine run.
 
 Vercel did not auto-deploy the push. The workspace has no `.vercel` project link
 or deploy hook. Manual Vercel publish or Git-integration reconnect is required.
@@ -289,13 +288,21 @@ ECHO renders text only. Structured results need server-validated payloads first.
 
 Continue ECHO/Veritas at `F:\Downloads\Veritas-Echo-Integration` on local `main`.
 Read this handoff, `PENDING_WORK.md`, `RELEASE_VERIFICATION.md` and
-`FUZZY_COMMANDS.md`, then inspect `git status`, `git log` and remotes. FreeLLMAPI
-is ECHO's primary conversational brain and is verified locally; deterministic
-commands, security gates, offline fallback and free browser speech are complete.
+`FUZZY_COMMANDS.md`, then inspect `git status`, `git log` and remotes. Phase 1
+(conversational follow-up navigation with a verified, allowlisted route action)
+and Phase 2 (compact/expanded/full-screen workspace) are complete. FreeLLMAPI is
+still the primary conversational brain, with deterministic commands, security
+gates, offline fallback and free browser speech.
+
+Next priorities, in order: (1) microphone input and a foreground-only "Echo"
+wake word, documenting browser background-tab and vendor-speech limits; (2)
+authorized read-only data tools with account/role scoping and no raw records in
+model context; only then (3) tables/charts for validated results. The portal has
+no documented grade-projection feature, so do not invent one.
+
 Do not recreate completed features, weaken tests or enable a paid provider.
-Production Vercel still needs a public HTTPS FreeLLMAPI endpoint plus the
-server-side environment variables; never expose keys to the frontend. After any
-change, rerun the 129 tests, TypeScript, build, browser regression and the opt-in
-provider test. Keep the Markdown/PDF handoffs and `F:\ECHO-Handoff` copies
-current. Verify the deployed site after pushing; do not claim provider success
-from HTTP 200 or Ready alone.
+After any change, rerun `npm run test:echo` (149 tests), `npx tsc --noEmit`,
+`npm run build` and `npm run test:echo:browser`; the opt-in provider test needs
+the FreeLLMAPI desktop gateway. Keep the Markdown/PDF handoffs and
+`F:\ECHO-Handoff` copies current. Verify the deployed site after pushing; do not
+claim provider success from HTTP 200 or Ready alone.

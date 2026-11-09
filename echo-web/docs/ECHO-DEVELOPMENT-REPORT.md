@@ -315,3 +315,56 @@ bc65f85 Merge ECHO chat integration into productivity portal
 | Multi-browser matrix | Not implemented |
 
 ---
+## N. Addendum - 2026-11-09 (conversational navigation and workspace modes)
+
+### What was broken
+
+After ECHO explained a page and offered to open it, accepting the offer ("okay
+take me there") produced only more prose. Two independent causes:
+
+1. The service held no structured state for the offer; `buildEchoReply` is
+   stateless, and when FreeLLMAPI was configured the provider answered the
+   follow-up as fresh conversation, so the deterministic path never ran.
+2. The browser had no way to receive an action from a server reply, and the
+   local command recognizer rejected bare deictic phrases with "I could not
+   match that".
+
+### What was implemented
+
+- `server/services/echoConversation.ts`: `EchoNavigationAction`, offer/cancel
+  detection, explicit-destination parsing, `navigationOfferFor`,
+  `attachNavigationOffer`, and accepted/cancelled/expired reply builders. Paths
+  come only from the fixed topic allowlist, never from model text.
+- `server/services/echo.ts`: per-session pending offer store bound to `sub` and
+  `role`, 60 s TTL, deleted on execution, cancellation, replacement, role change
+  and revocation; acceptance resolved before any provider call; `done` SSE now
+  carries the action.
+- `echo-web/widget/widget.js`: forwards `done.action` through
+  `echo-widget:action` and prints the host's verified result, or an honest
+  failure message.
+- `src/components/EchoAssistant.tsx`: re-validates the path against `ECHO_PAGES`
+  and the live role, navigates, and confirms only when both the React location
+  and `window.location` match.
+- `src/lib/echoCommands.ts` / `echoRecognition.ts`: `isNavigationFollowUp` and
+  `EchoCommandSession.hasPending` so follow-ups defer to the server offer.
+- `echo-web/widget/widget.js`: compact / expanded / full-screen modes with a
+  cycling size button, Escape restore, and per-session persistence.
+
+### Verification
+
+- `npm run test:echo`: 149/149 pass, including 14 new navigation lifecycle tests
+  against the real router (offer/accept, `open it`, `yes please`, `show me`,
+  no-pending ambiguity, cancel, 60 s expiry, replacement, role change, session
+  isolation, logout revocation, cross-account rejection, provider bypass,
+  multi-destination withholding).
+- `npm run test:echo:browser`: pass, including a real built-in-engine run (real
+  widget + cookie session + real router) where `/assignments` becomes
+  `/attendance` only after acceptance, and a forced `history.pushState` mismatch
+  that must report "could not confirm". Display modes are asserted at 1280x850.
+- `npx tsc --noEmit`: pass. `npm run build`: pass.
+
+### Not implemented
+
+Microphone input, wake-word detection, authorized data-retrieval tools, and
+charts/tables for results. The portal exposes no documented grade-projection
+feature, so none was invented.
