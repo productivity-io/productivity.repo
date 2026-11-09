@@ -55,8 +55,48 @@ Verified in the browser regression at 1280x850: the panel widens on expand, fill
 the viewport in full screen, returns to compact, the URL never changes, and the
 message count is identical before and after each switch.
 
-Microphone input, wake-word detection and admin data retrieval are **not**
-implemented; see "Remaining priorities" below.
+## Phase 3 - optional voice input and the "Echo" wake word (2026-11-09)
+
+Voice input is opt-in and free: no API key, no paid service, and no audio is sent
+to the ECHO server. The widget uses the browser's own `SpeechRecognition`
+(`webkitSpeechRecognition`) engine behind one small provider interface, so a host
+page can substitute another engine with `window.EchoWidgetRecognitionProviders`
+and `data-recognition-provider`.
+
+- **Dictation.** The microphone button captures one utterance: interim text
+  appears in the status line, and the final transcript fills the composer and is
+  submitted through the same form path as typing. Portal commands, the
+  FreeLLMAPI conversation, Stop and spoken replies therefore behave identically,
+  and any draft the user already typed is preserved.
+- **Wake word.** The "Echo" checkbox arms continuous recognition and acts only
+  on utterances beginning with "Echo", "hey Echo", "okay Echo" or "hi Echo".
+  Any other speech is ignored and never displayed, so room conversation cannot
+  trigger navigation. The wake word is never restored across page loads: every
+  reload needs a fresh opt-in.
+- **Release points.** The recognizer is aborted while ECHO speaks (otherwise it
+  transcribes its own voice) and re-armed when the speech queue drains, and it is
+  released on Stop, New chat, logout/widget destroy, panel close and whenever the
+  tab is hidden. Denied permission, a missing device, offline recognition and
+  unsupported browsers produce explicit messages; text chat keeps working and the
+  controls are hidden when no recognizer exists.
+
+Limitations, stated plainly: the browser engine normally transcribes in the
+vendor's cloud, so audio leaves the device and recognition needs a network; it is
+missing in some browsers (notably Firefox) and needs microphone permission; and
+vendors suspend the stream in hidden tabs, so "Echo" is a foreground wake word
+only, not a background hotword. A true background wake word needs a native app or
+an always-on local model, neither of which exists here.
+
+Verified with a simulated recognizer in `tests/echo-browser.mjs`: dictation start,
+interim text, spoken command navigation, one-shot stop, permission denial, Stop
+while listening, wake-word arming, ignoring speech without the wake word,
+wake-word command execution, no room-speech display, TTS pause/resume, New chat
+release, disarm, and a browser without any recognizer. These are simulated-API
+tests, **not** real microphone or audio verification; no real-device audio run was
+possible in this environment.
+
+Authorized data retrieval and workspace visualisations remain **not** implemented;
+see "Remaining priorities" below.
 
 ## What changed
 
@@ -136,9 +176,11 @@ run (real widget, cookie session, real router) proving the URL changes from
 
 Browser coverage includes login, typo commands, verified navigation feedback,
 context help, clipboard success/failure, Stop/reset/error recovery, speech
-on/off/speed/Stop/overlap/failure fallback, 390 px mobile, logout abort and
-second-account isolation. Browser regression uses fake SSE; only the opt-in test
-proves a real model.
+on/off/speed/Stop/overlap/failure fallback, voice input (dictation, permission
+denial, Stop while listening, wake word, TTS pause/resume, unsupported browser),
+display modes, 390 px mobile, logout abort and second-account isolation. Browser
+regression uses fake SSE and a simulated recognizer; only the opt-in test proves
+a real model, and no test exercises a real microphone.
 
 ## Configuration contract
 
@@ -238,13 +280,17 @@ No credentials were exposed to frontend code. No paid provider is enabled.
 - `server/utils/portalMode.ts`: production-mode detection.
 - `.env.example`, `README.md`, `echo-web/README.md`: configuration contract.
 
-## Git and publication statePrevious release commit: `a49b9db8cacbb9c81490da4b209931ea45a1fa7`.
+## Git and publication state
+
+Previous release commit: `a49b9db8cacbb9c81490da4b209931ea45a1fa7`.
 Base for this work: `9d761e6`, rebased onto upstream `5cfd8da`
 (feat(portal): support PORTAL_DEMO_MODE) before pushing, so history is linear.
 Phase 1 navigation: `0013123` (feat(echo): execute offered navigation from
 conversational follow-ups). Phase 2 workspace modes: `6cef2ab`
-(feat(echo): add expanded and full-screen workspace modes). A documentation
-commit sits on top; use `git log --oneline` for the exact current HEAD.
+(feat(echo): add expanded and full-screen workspace modes). Phase 3 voice input:
+`89202cb` (feat(echo): add optional microphone input and a foreground "Echo"
+wake word). Documentation commits sit on top; use `git log --oneline` for the
+exact current HEAD.
 
 `npm run test:echo`: **150/150 PASS**.
 `tsc --noEmit`: PASS.
@@ -263,18 +309,19 @@ status alone is not provider proof. Do not force-push.
 
 ## Remaining priorities (not implemented)
 
-1. **Spoken input and wake word.** The widget has TTS only. A mic button using
-the browser `SpeechRecognition` API is the next step; continuous "Echo" wake
-word is limited by browser background-tab suspension and by the browser's own
-speech service, so it must be documented as foreground-only. No audio is sent to
-FreeLLMAPI today because there is no audio capture at all.
-2. **Authorized data retrieval.** No `get_authorized_*` tools exist. The portal
+1. **Authorized data retrieval.** No `get_authorized_*` tools exist. The portal
 API is read-only for the signed-in account and there is no documented grade
 projection feature, so ECHO must not invent one. Any future tool layer must
 reuse `req.auth`, scope by account, and keep model context free of raw records.
-3. **Charts/tables in the workspace.** `recharts` is already a dependency, but
-ECHO renders text only. Structured results need server-validated payloads first.
-4. **File upload / multimodal input.** Not present.
+The likely sources are the existing authenticated routes (attendance, assignments
+and timetable for the signed-in student) rather than a new data store.
+2. **Charts/tables in the workspace.** `recharts` is already a dependency, but
+ECHO renders text only. Structured results need server-validated payloads first,
+and only where real supported data exists.
+3. **File upload / multimodal input.** Not present.
+4. **Real audio and real-provider verification.** Voice input is verified with a
+simulated recognizer only. A real microphone run needs a machine with a device
+and a foreground browser, which this environment does not provide.
 
 ## Exact handoff paths
 
@@ -292,15 +339,17 @@ Continue ECHO/Veritas at `F:\Downloads\Veritas-Echo-Integration` on local `main`
 Read this handoff, `PENDING_WORK.md`, `RELEASE_VERIFICATION.md` and
 `FUZZY_COMMANDS.md`, then inspect `git status`, `git log` and remotes. Phase 1
 (conversational follow-up navigation with a verified, allowlisted route action)
-and Phase 2 (compact/expanded/full-screen workspace) are complete. FreeLLMAPI is
-still the primary conversational brain, with deterministic commands, security
-gates, offline fallback and free browser speech.
+Phase 2 (compact/expanded/full-screen workspace) and Phase 3 (optional browser
+microphone dictation plus a foreground-only "Echo" wake word, wired to the same
+command/conversation/Stop/TTS path) are complete. FreeLLMAPI is still the primary
+conversational brain, with deterministic commands, security gates, offline
+fallback and free browser speech in both directions.
 
-Next priorities, in order: (1) microphone input and a foreground-only "Echo"
-wake word, documenting browser background-tab and vendor-speech limits; (2)
-authorized read-only data tools with account/role scoping and no raw records in
-model context; only then (3) tables/charts for validated results. The portal has
-no documented grade-projection feature, so do not invent one.
+Next priorities, in order: (1) authorized read-only data tools with account/role
+scoping and no raw records in model context; only then (2) tables/charts for
+validated results, and only where real supported data exists. The portal has no
+documented grade-projection feature, so do not invent one. Real microphone and
+real-device audio verification still needs hardware this environment lacks.
 
 Do not recreate completed features, weaken tests or enable a paid provider.
 After any change, rerun `npm run test:echo` (150 tests), `npx tsc --noEmit`,
