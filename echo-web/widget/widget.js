@@ -30,6 +30,8 @@
     .voice-row{display:flex;align-items:center;justify-content:space-between;gap:8px;padding:4px 14px 2px;font-size:11px;color:#566b75}
     .voice-row select{font:inherit;border:1px solid #ccd9df;border-radius:6px;background:#fff;color:#294652;padding:2px 4px}
     .voice-note{color:#8a4b00;text-align:right;flex:1}.voice-note:empty{display:none}
+    .mic{border:1px solid #a7bec9;border-radius:8px;background:#fff;color:#294652;padding:9px 11px;line-height:1}.mic[aria-pressed="true"]{background:#fdecec;border-color:#c9574f;color:#8f2f27}
+    .voice-row{flex-wrap:wrap}.wake-label{display:flex;align-items:center;gap:4px;cursor:pointer}.wake-label input{margin:0}
     @media(max-width:440px){.panel{right:10px;left:10px;bottom:82px;width:auto;height:70dvh}.launcher{right:12px;bottom:14px}}
     @media(prefers-reduced-motion:reduce){*{scroll-behavior:auto!important}}
     /* Display modes: the conversation stays mounted, so switching never starts a new chat. */
@@ -49,8 +51,8 @@
       <div class="messages" role="log" aria-live="polite" aria-relevant="additions text"></div>
       <div class="suggestions" role="group" aria-label="Page suggestions"></div>
       <div class="status" role="status"></div>
-      <form><textarea aria-label="Your message" placeholder="Ask a question…" maxlength="4000" rows="2" required></textarea><button class="stop" type="button" hidden>Stop</button><button class="send" type="submit">Send</button></form>
-      <div class="voice-row"><label>Voice speed <select class="rate" aria-label="Speech speed"><option value="0.8">0.8×</option><option value="1" selected>1×</option><option value="1.25">1.25×</option><option value="1.5">1.5×</option></select></label><span class="voice-note" role="status"></span></div>
+      <form><textarea aria-label="Your message" placeholder="Ask a question…" maxlength="4000" rows="2" required></textarea><button class="stop" type="button" hidden>Stop</button><button class="mic" type="button" aria-label="Speak a message" aria-pressed="false" title="Speak a message">🎙</button><button class="send" type="submit">Send</button></form>
+      <div class="voice-row"><label>Voice speed <select class="rate" aria-label="Speech speed"><option value="0.8">0.8×</option><option value="1" selected>1×</option><option value="1.25">1.25×</option><option value="1.5">1.5×</option></select></label><label class="wake-label"><input type="checkbox" class="wake" aria-label="Wake word"> “Echo”</label><span class="voice-note" role="status"></span></div>
       <div class="footer">AI answers can be mistaken. Confirm important details with the business.</div>
     </section>`;
   shadow.append(surface);
@@ -152,6 +154,11 @@
   const rateSelect = shadow.querySelector(".rate");
   rateSelect.value = String(initialSpeech.rate);
 
+  // Voice input lives below and reports through these hooks, so speech and the recognizer never
+  // reference each other before both exist.
+  let onSpeechChange = () => {};
+  let onBusyChange = () => {};
+  let dictationActive = () => false;
   const speech = (() => {
     let provider = null;
     let providerChecked = false;
@@ -197,6 +204,7 @@
       if (!active) { notify(); return; }
       speaking = true;
       notify();
+      onSpeechChange(true);
       const token = generation;
       try {
         await active.speak(chunk, { rate });
@@ -206,6 +214,9 @@
       if (token !== generation || tornDown) return;
       speaking = false;
       notify();
+      // Only release the microphone once the whole queue is empty: chunk gaps would otherwise
+      // restart the recognizer mid-answer and let it transcribe ECHO's own voice.
+      if (!queue.length) onSpeechChange(false);
       pump();
     }
 
@@ -245,6 +256,7 @@
       speaking = false;
       if (provider) provider.cancel();
       notify();
+      onSpeechChange(false);
     }
 
     function setEnabled(value) {
@@ -301,11 +313,270 @@
   }
   speech.refresh();
 
+  // ---------- Optional voice input ----------
+  // Free by default: the browser's own recognizer (Chrome and Edge ship one). No API key, and no
+  // audio is ever sent to this server. The limits are real and shown rather than hidden: it needs
+  // microphone permission and usually a network round trip to the browser vendor, and vendors stop
+  // the stream when the tab is hidden, so "Echo" is a foreground wake word, not a background
+  // service. A host page may substitute its own engine with
+  // window.EchoWidgetRecognitionProviders[<id>] and data-recognition-provider="<id>".
+  const recognitionProviders = new Map();
+  recognitionProviders.set("browser", () => {
+    const Ctor = window.SpeechRecognition || window.webkitSpeechRecognition;
+    if (typeof Ctor !== "function") return null;
+    let current = null;
+    return {
+      id: "browser",
+      start({ continuous, lang, onPartial, onFinal, onError, onEnd }) {
+        const recognition = new Ctor();
+        current = recognition;
+        recognition.lang = lang;
+        recognition.continuous = Boolean(continuous);
+        recognition.interimResults = true;
+        recognition.maxAlternatives = 1;
+        recognition.onresult = event => {
+          let partial = "";
+          let final = "";
+          const results = event?.results ?? [];
+          for (let index = event?.resultIndex ?? 0; index < results.length; index += 1) {
+            const result = results[index];
+            const text = result?.[0]?.transcript ?? "";
+            if (result?.isFinal) final += text;
+            else partial += text;
+          }
+          if (partial.trim()) onPartial(partial.trim());
+          if (final.trim()) onFinal(final.trim());
+        };
+        recognition.onerror = event => onError(String(event?.error ?? "unknown"));
+        recognition.onend = () => { if (current === recognition) current = null; onEnd(); };
+        recognition.start();
+      },
+      stop() { const active = current; current = null; try { active?.stop(); } catch {} },
+      abort() { const active = current; current = null; try { active?.abort(); } catch {} },
+    };
+  });
+  if (window.EchoWidgetRecognitionProviders && typeof window.EchoWidgetRecognitionProviders === "object") {
+    for (const [id, factory] of Object.entries(window.EchoWidgetRecognitionProviders)) {
+      if (/^[a-z][a-z0-9-]{1,40}$/.test(id) && typeof factory === "function") recognitionProviders.set(id, factory);
+    }
+  }
+  const micButton = shadow.querySelector(".mic");
+  const wakeLabel = shadow.querySelector(".wake-label");
+  const wakeBox = shadow.querySelector(".wake");
+  // A leading vocative only: "Echo, open attendance", "hey Echo what is due", "okay Echo stop".
+  const WAKE_PATTERN = /^(?:(?:hey|hi|ok|okay)\s+)?echo\b[\s,.;:!?—–-]*(.*)$/i;
+  const dictation = (() => {
+    let provider = null;
+    let checked = false;
+    let unavailable = false;
+    let armed = false;
+    let active = false;
+    let muted = false;
+    let suspended = false;
+    let tornDown = false;
+    let restart = null;
+    let startedAt = 0;
+    let flaps = 0;
+
+    function ensure() {
+      if (checked) return provider;
+      checked = true;
+      const wanted = script?.dataset.recognitionProvider || "browser";
+      const factory = recognitionProviders.get(wanted) || recognitionProviders.get("browser");
+      try {
+        const candidate = factory && factory();
+        if (candidate && typeof candidate.start === "function" && typeof candidate.abort === "function") provider = candidate;
+      } catch {}
+      if (!provider) unavailable = true;
+      return provider;
+    }
+    function render() {
+      const listening = active || armed;
+      micButton.setAttribute("aria-pressed", listening ? "true" : "false");
+      micButton.setAttribute("aria-label", listening ? "Stop listening" : "Speak a message");
+      micButton.title = listening ? "Stop listening" : "Speak a message";
+      micButton.disabled = unavailable || tornDown;
+      wakeBox.disabled = unavailable || tornDown;
+      updateStop();
+    }
+    function halt() {
+      if (restart) { clearTimeout(restart); restart = null; }
+      active = false;
+      if (provider) provider.abort();
+      render();
+    }
+    function begin(continuous) {
+      if (tornDown || muted || suspended || busy || panel.hidden) return false;
+      if (active) return true;
+      if (!ensure()) { render(); return false; }
+      try {
+        provider.start({
+          continuous,
+          lang: document.documentElement.lang || navigator.language || "en-US",
+          onPartial, onFinal, onError, onEnd,
+        });
+      } catch {
+        active = false;
+        render();
+        status.textContent = "The microphone could not start. Check your browser's microphone permission and try again.";
+        return false;
+      }
+      active = true;
+      startedAt = Date.now();
+      render();
+      return true;
+    }
+    function onPartial(text) {
+      if (!active || muted || !text) return;
+      if (armed) {
+        // Waiting for the wake word: never show other people's speech in the panel.
+        const match = text.match(WAKE_PATTERN);
+        if (!match) return;
+        const command = match[1].trim();
+        status.textContent = command ? `“${command}”` : "I'm listening.";
+        return;
+      }
+      status.textContent = `“${text}”`;
+    }
+    function submit(text) {
+      if (busy || destroyed) return;
+      // Keep a draft the user already typed instead of silently replacing it.
+      const draft = input.value.trim();
+      input.value = draft ? `${draft} ${text}` : text;
+      shadow.querySelector("form").requestSubmit();
+    }
+    function onFinal(text) {
+      const heard = String(text || "").trim();
+      if (!heard || tornDown || muted) return;
+      if (armed) {
+        const match = heard.match(WAKE_PATTERN);
+        if (!match) return; // ordinary room conversation is ignored, never executed
+        const command = match[1].replace(/^[\s,.;:!?—–-]+/, "").trim();
+        if (!command) { status.textContent = "I'm listening."; return; }
+        if (busy) { status.textContent = "I'm still working on the last answer. Try again in a moment."; return; }
+        submit(command);
+        return;
+      }
+      if (busy) return;
+      halt(); // one dictation per tap, then the microphone is off
+      submit(heard);
+    }
+    function onError(code) {
+      if (code === "aborted" || code === "no-speech") return; // routine, not a failure
+      if (code === "not-allowed" || code === "service-not-allowed") {
+        armed = false;
+        wakeBox.checked = false;
+        halt();
+        status.textContent = "Microphone permission was denied. Allow it in your browser, or type instead.";
+        return;
+      }
+      if (code === "audio-capture") status.textContent = "No microphone was found. You can still type.";
+      else if (code === "network") status.textContent = "Voice recognition needs a network connection here. You can still type.";
+      else if (code === "language-not-supported") status.textContent = "This browser does not support your language for voice input. You can still type.";
+      else status.textContent = "Voice input stopped unexpectedly. Tap the microphone to try again.";
+      if (!armed) halt();
+    }
+    function onEnd() {
+      active = false;
+      render();
+      if (tornDown || !armed || muted || suspended || busy || panel.hidden) return;
+      // A vendor that ends immediately would otherwise spin; stop after a few instant flaps.
+      flaps = Date.now() - startedAt < 300 ? flaps + 1 : 0;
+      if (flaps >= 4) {
+        armed = false;
+        wakeBox.checked = false;
+        status.textContent = "Voice input kept stopping. Tap the microphone to listen again.";
+        return;
+      }
+      // Vendors end the stream after a pause or a fixed timeout, so re-arm while wake mode stays on.
+      if (restart) clearTimeout(restart);
+      restart = setTimeout(() => { restart = null; begin(true); }, 400);
+    }
+    function listenOnce() {
+      if (busy) { status.textContent = "I'm still working on the last answer."; return; }
+      if (!ensure()) { render(); status.textContent = "Voice input isn't available in this browser. Text chat still works."; return; }
+      armed = false;
+      wakeBox.checked = false;
+      halt();
+      if (begin(false)) status.textContent = "Listening…";
+    }
+    function armWake(value) {
+      const next = Boolean(value);
+      if (next && !ensure()) {
+        wakeBox.checked = false;
+        render();
+        status.textContent = "Voice input isn't available in this browser. Text chat still works.";
+        return;
+      }
+      armed = next;
+      render();
+      if (!armed) { halt(); status.textContent = "Wake word off."; return; }
+      if (begin(true)) status.textContent = "Listening for “Echo”…";
+    }
+    function stop() {
+      armed = false;
+      wakeBox.checked = false;
+      halt();
+      status.textContent = "Voice input off.";
+    }
+    function mute(value) {
+      const next = Boolean(value);
+      if (next === muted) return;
+      muted = next;
+      if (muted) halt();
+      else if (armed && !suspended && !tornDown) begin(true);
+    }
+    function suspend() { suspended = true; halt(); }
+    function resume() { if (!suspended) return; suspended = false; if (armed && !tornDown) begin(true); }
+    function onOpen() {
+      if (suspended) suspended = false;
+      if (armed && !tornDown && begin(true)) status.textContent = "Listening for “Echo”…";
+    }
+    function onBusyChange(value) {
+      if (!value && armed && !active && !muted && !suspended && !tornDown) begin(true);
+    }
+    function teardown() {
+      tornDown = true;
+      armed = false;
+      suspended = true;
+      halt();
+      provider = null;
+    }
+    function refresh() {
+      if (!ensure()) {
+        micButton.hidden = true;
+        wakeLabel.hidden = true;
+        render();
+        return;
+      }
+      // The microphone is never restored automatically: every page load needs a fresh opt-in.
+      armed = false;
+      wakeBox.checked = false;
+      render();
+    }
+    return {
+      get active() { return active; },
+      get armed() { return armed; },
+      listenOnce, armWake, stop, mute, suspend, resume, onOpen, onBusyChange, teardown, refresh,
+    };
+  })();
+  wakeBox.addEventListener("change", () => dictation.armWake(wakeBox.checked));
+  micButton.addEventListener("click", () => {
+    if (busy) { status.textContent = "I'm still working on the last answer."; return; }
+    if (dictation.active || dictation.armed) dictation.stop();
+    else dictation.listenOnce();
+  });
+  onSpeechChange = speaking => dictation.mute(speaking);
+  onBusyChange = value => dictation.onBusyChange(value);
+  dictationActive = () => dictation.active;
+  dictation.refresh();
+
   host.addEventListener("echo-widget:destroy", () => {
     destroyed = true;
     bootController.abort();
     controller?.abort();
     speech.teardown();
+    dictation.teardown();
     token = null;
     window.removeEventListener("pagehide", onPageHide);
     host.remove();
@@ -374,11 +645,12 @@
     }
   }
   function updateStop() {
-    stop.hidden = !(busy || speech.speaking);
+    stop.hidden = !(busy || speech.speaking || dictationActive());
   }
   function setBusy(value) {
     if (destroyed) return;
     busy = value;
+    onBusyChange(value);
     send.disabled = value || !config;
     input.disabled = value || !config;
     reset.disabled = value || !config;
@@ -386,8 +658,9 @@
     suggestions.querySelectorAll("button").forEach(button => { button.disabled = value || !config; });
   }
   stop.addEventListener("click", () => {
-    // Text and audio stop together. A remote service may commit a turn before the browser
-    // sees its final event, so discard its token to keep it out of later context.
+    // Text, audio and the microphone stop together. A remote service may commit a turn before
+    // the browser sees its final event, so discard its token to keep it out of later context.
+    if (dictationActive() || dictation.armed) dictation.stop();
     speech.cancel();
     if (!busy) return;
     token = null;
@@ -408,6 +681,7 @@
   });
   function close() {
     speech.cancel();
+    dictation.suspend();
     panel.hidden = true;
     launcher.setAttribute("aria-expanded", "false");
     launcher.focus();
@@ -417,6 +691,7 @@
     panel.hidden = false;
     launcher.setAttribute("aria-expanded", "true");
     refreshContext();
+    dictation.onOpen();
     if (config) input.focus();
   });
   shadow.querySelector(".close").addEventListener("click", close);
@@ -457,6 +732,7 @@
         }
       }
       speech.cancel();
+      if (dictation.active || dictation.armed) dictation.stop();
       token = null;
       host.dispatchEvent(new CustomEvent("echo-widget:reset", { bubbles: true }));
       log.replaceChildren();
@@ -564,6 +840,11 @@
     }
   });
   window.addEventListener("pagehide", onPageHide);
+  // Browsers stop recognition in hidden tabs, so release the microphone and re-arm on return.
+  document.addEventListener("visibilitychange", () => {
+    if (document.visibilityState === "hidden") dictation.suspend();
+    else dictation.resume();
+  });
   setBusy(false);
   request("/config", { signal: bootController.signal }).then(response => response.json()).then(value => {
     if (destroyed) return;

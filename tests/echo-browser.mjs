@@ -213,6 +213,30 @@ try {
     };
     Object.defineProperty(window, 'speechSynthesis', { configurable: true, value: fake });
     window.SpeechSynthesisUtterance = function (text) { this.text = text; };
+    // No headless microphone either: instrument the same recognition API the widget uses.
+    const mic = { starts: 0, stops: 0, aborts: 0, ends: 0, running: false, continuous: null, lang: null, denied: false, target: null };
+    window.__echoMic = mic;
+    class FakeRecognition {
+      constructor() { mic.target = this; }
+      start() {
+        if (mic.denied) { setTimeout(() => { this.onerror?.({ error: 'not-allowed' }); this.onend?.(); }, 0); return; }
+        mic.starts += 1;
+        mic.running = true;
+        mic.continuous = this.continuous;
+        mic.lang = this.lang;
+        setTimeout(() => this.onstart?.(), 0);
+      }
+      stop() { mic.stops += 1; mic.running = false; setTimeout(() => this.onend?.(), 0); }
+      abort() { mic.aborts += 1; mic.running = false; setTimeout(() => this.onend?.(), 0); }
+    }
+    window.SpeechRecognition = FakeRecognition;
+    window.webkitSpeechRecognition = FakeRecognition;
+    window.__echoHear = (text, { final = true } = {}) => {
+      if (!mic.target) return false;
+      const result = Object.assign([{ transcript: text, confidence: 0.92 }], { isFinal: final });
+      mic.target.onresult?.({ resultIndex: 0, results: [result] });
+      return true;
+    };
   });
   const errors = [];
   const portalRequests = [];
@@ -482,6 +506,81 @@ try {
   const silentCount = (await speechState()).spoken.length;
   await send('This reply should be silent.');
   assert.equal((await speechState()).spoken.length, silentCount, 'voice off produces no audio');
+  // ---------- Optional voice input: one-shot dictation and the "Echo" wake word ----------
+  const micState = () => page.evaluate(() => window.__echoMic);
+  const hear = (text, options = {}) => page.evaluate(([spoken, opts]) => window.__echoHear(spoken, opts), [text, options]);
+  assert.equal(await widget.locator('.mic').isVisible(), true, 'microphone control is offered when the browser has a recognizer');
+  assert.equal(await widget.locator('.mic').getAttribute('aria-pressed'), 'false');
+  const usersBeforeSpeech = await widget.locator('.user').count();
+  await widget.locator('.mic').click();
+  await page.waitForFunction(() => window.__echoMic.starts >= 1);
+  await widget.locator('.status').filter({ hasText: 'Listening…' }).waitFor();
+  assert.equal(await widget.locator('.mic').getAttribute('aria-pressed'), 'true', 'listening is announced in the controls');
+  await hear('Show att', { final: false });
+  await widget.locator('.status').filter({ hasText: 'Show att' }).waitFor();
+  assert.equal(await widget.locator('.user').count(), usersBeforeSpeech, 'interim speech is never submitted');
+  await hear('Open attendance');
+  await page.waitForURL('**/attendance');
+  await widget.locator('.status').filter({ hasText: 'Ready.' }).waitFor();
+  assert.match(await widget.locator('.assistant').last().textContent(), /View confirmed/, 'a spoken command runs the same verified navigation');
+  assert.equal(await widget.locator('.mic').getAttribute('aria-pressed'), 'false', 'one dictation stops the microphone');
+  assert.ok((await micState()).stops + (await micState()).aborts >= 1);
+  // Denied permission must be explained, never swallowed, and must not break typing.
+  await page.evaluate(() => { window.__echoMic.denied = true; });
+  await widget.locator('.mic').click();
+  await widget.locator('.status').filter({ hasText: /permission was denied/ }).waitFor();
+  assert.equal(await widget.locator('.mic').getAttribute('aria-pressed'), 'false');
+  await page.evaluate(() => { window.__echoMic.denied = false; });
+  await send('Text still works after a denied microphone.');
+  assert.match(await widget.locator('.assistant').last().textContent(), /ECHO: Text still works after a denied microphone/);
+  // Stop is available while listening and releases the microphone.
+  await widget.locator('.mic').click();
+  await page.waitForFunction(() => window.__echoMic.running === true);
+  assert.equal(await widget.getByRole('button', { name: 'Stop', exact: true }).isVisible(), true, 'Stop is offered while listening');
+  const abortsBeforeStop = (await micState()).aborts;
+  await widget.getByRole('button', { name: 'Stop', exact: true }).click();
+  await page.waitForFunction(count => window.__echoMic.aborts > count, abortsBeforeStop);
+  await widget.locator('.status').filter({ hasText: 'Voice input off.' }).waitFor();
+  assert.equal(await widget.locator('.mic').getAttribute('aria-pressed'), 'false');
+  // Wake word: continuous mode acts only on utterances that start with "Echo".
+  await widget.locator('.wake').check();
+  await widget.locator('.status').filter({ hasText: /Listening for “Echo”/ }).waitFor();
+  assert.equal((await micState()).continuous, true, 'wake mode keeps one continuous stream');
+  const usersBeforeIgnored = await widget.locator('.user').count();
+  const startsBeforeIgnored = (await micState()).starts;
+  await hear('open library');
+  await page.waitForTimeout(500);
+  assert.equal(await widget.locator('.user').count(), usersBeforeIgnored, 'speech without the wake word is ignored');
+  assert.equal((await micState()).starts, startsBeforeIgnored, 'ignored speech never restarts the stream');
+  await hear('Echo, open library');
+  await page.waitForURL('**/library');
+  await widget.locator('.status').filter({ hasText: 'Ready.' }).waitFor();
+  assert.match(await widget.locator('.assistant').last().textContent(), /View confirmed/, 'the wake word hands the rest of the sentence to the same command path');
+  assert.equal(await widget.locator('.wake').isChecked(), true, 'wake mode stays armed after a command');
+  // Waiting for the wake word must not display what other people in the room said.
+  await hear('what is the library policy', { final: false });
+  await page.waitForTimeout(250);
+  assert.doesNotMatch(await widget.locator('.status').textContent(), /library policy/, 'room speech is not shown while waiting for the wake word');
+  // ECHO must not transcribe its own voice: recognition pauses while it speaks and resumes after.
+  const abortsBeforeSpeaking = (await micState()).aborts;
+  await widget.locator('.voice').click();
+  await page.waitForFunction(count => window.__echoMic.aborts > count, abortsBeforeSpeaking);
+  assert.equal((await micState()).running, false, 'the microphone is released while ECHO speaks');
+  await page.waitForFunction(() => window.__echoMic.running === true, null, { timeout: 8000 });
+  assert.equal(await widget.locator('.voice').getAttribute('aria-pressed'), 'true');
+  await widget.locator('.voice').click();
+  // A new conversation must release the microphone as well as the session.
+  await widget.getByRole('button', { name: 'New chat', exact: true }).click();
+  await widget.locator('.status').filter({ hasText: 'New conversation.' }).waitFor();
+  assert.equal(await widget.locator('.wake').isChecked(), false, 'a new conversation releases the microphone');
+  assert.equal(await widget.locator('.mic').getAttribute('aria-pressed'), 'false');
+  await widget.locator('.wake').check();
+  await widget.locator('.status').filter({ hasText: /Listening for “Echo”/ }).waitFor();
+  await widget.locator('.wake').uncheck();
+  await widget.locator('.status').filter({ hasText: 'Wake word off.' }).waitFor();
+  const startsAfterDisarm = (await micState()).starts;
+  await page.waitForTimeout(700);
+  assert.equal((await micState()).starts, startsAfterDisarm, 'turning wake mode off stops re-arming the recognizer');
   // ---------- Expandable / full-screen workspace ----------
   const compactBox = await widget.locator('.panel').boundingBox();
   const assistantCount = await widget.locator('.assistant').count();
@@ -561,6 +660,19 @@ try {
   await widget.locator('.voice-note').filter({ hasText: /Voice isn't available/ }).waitFor();
   assert.equal(await widget.locator('.voice').isDisabled(), true);
   await page.evaluate(() => { window.__echoSpeech.fail = false; });
+  // A browser without any recognizer gets an honest widget instead of a dead control.
+  await page.addInitScript(() => { delete window.SpeechRecognition; delete window.webkitSpeechRecognition; });
+  await page.reload();
+  await widget.locator('.launcher').waitFor();
+  await widget.locator('.launcher').click();
+  await page.waitForFunction(() => {
+    const host = document.querySelector('echo-chat-widget');
+    return host && !host.shadowRoot.querySelector('textarea').disabled;
+  });
+  assert.equal(await widget.locator('.mic').isVisible(), false, 'no microphone control without a recognizer');
+  assert.equal(await widget.locator('.wake-label').isVisible(), false, 'no wake word control without a recognizer');
+  await send('Text works without voice input.');
+  assert.match(await widget.locator('.assistant').last().textContent(), /ECHO: Text works without voice input/);
   assert.ok(abortedReplies >= 1);
   assert.ok(traffic.every(request => !JSON.stringify(request).includes(portalToken)));
   assert.ok(traffic.every(request => request.headers.cookie === undefined));
@@ -573,7 +685,7 @@ try {
   await page.reload();
   await disabledConfig;
   assert.equal(await page.locator('echo-chat-widget').count(), 0);
-  console.log('PASS portal commands, verified feedback/failure, contextual help/suggestions, clipboard success/failure, stop/reset/error recovery, optional speech (on/off, speed, cancel, overlap, failure fallback), display modes, mobile, logout abort and account isolation; mock SSE for command flows plus a real built-in-engine follow-up navigation run (still not provider evidence)');
+  console.log('PASS portal commands, verified feedback/failure, contextual help/suggestions, clipboard success/failure, stop/reset/error recovery, optional speech (on/off, speed, cancel, overlap, failure fallback), optional voice input (dictation, interim results, permission denial, Stop, Echo wake word, TTS pause/resume, unsupported browser), display modes, mobile, logout abort and account isolation; mock SSE for command flows, simulated recognizer/voice, plus a real built-in-engine follow-up navigation run (not real audio or provider evidence)');
 } finally {
   if (browser) await browser.close();
   for (const child of children) if (child.exitCode === null) child.kill();
