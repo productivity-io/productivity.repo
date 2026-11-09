@@ -119,7 +119,7 @@ Command: `ECHO_USE_DESKTOP_SETTINGS=true node tests/echo-freellm-provider.mjs`.
 
 | Check | Result |
 | --- | --- |
-| 149 unit/integration tests: config, commands, conversation, navigation, security | PASS |
+| 150 unit/integration tests: config, commands, conversation, navigation, security | PASS |
 | `tsc --noEmit` | PASS |
 | production `vite build` | PASS |
 | full browser regression | PASS |
@@ -239,12 +239,14 @@ No credentials were exposed to frontend code. No paid provider is enabled.
 - `.env.example`, `README.md`, `echo-web/README.md`: configuration contract.
 
 ## Git and publication statePrevious release commit: `a49b9db8cacbb9c81490da4b209931ea45a1fa7`.
-Phase 1 navigation: `8f1f0fa` (feat(echo): execute offered navigation from
-conversational follow-ups). Phase 2 workspace modes: `e98c21e`
-(feat(echo): add expanded and full-screen workspace modes). Both were committed
-on local `main` from base `9d761e6` and pushed to `origin/main`.
+Base for this work: `9d761e6`, rebased onto upstream `5cfd8da`
+(feat(portal): support PORTAL_DEMO_MODE) before pushing, so history is linear.
+Phase 1 navigation: `0013123` (feat(echo): execute offered navigation from
+conversational follow-ups). Phase 2 workspace modes: `6cef2ab`
+(feat(echo): add expanded and full-screen workspace modes). A documentation
+commit sits on top; use `git log --oneline` for the exact current HEAD.
 
-`npm run test:echo`: **149/149 PASS**.
+`npm run test:echo`: **150/150 PASS**.
 `tsc --noEmit`: PASS.
 `npm run build`: PASS (2045 modules).
 `npm run test:echo:browser`: PASS, including the real built-in engine run.
@@ -301,7 +303,7 @@ model context; only then (3) tables/charts for validated results. The portal has
 no documented grade-projection feature, so do not invent one.
 
 Do not recreate completed features, weaken tests or enable a paid provider.
-After any change, rerun `npm run test:echo` (149 tests), `npx tsc --noEmit`,
+After any change, rerun `npm run test:echo` (150 tests), `npx tsc --noEmit`,
 `npm run build` and `npm run test:echo:browser`; the opt-in provider test needs
 the FreeLLMAPI desktop gateway. Keep the Markdown/PDF handoffs and
 `F:\ECHO-Handoff` copies current. Verify the deployed site after pushing; do not

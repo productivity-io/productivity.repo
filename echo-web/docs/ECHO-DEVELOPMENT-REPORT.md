@@ -352,7 +352,7 @@ take me there") produced only more prose. Two independent causes:
 
 ### Verification
 
-- `npm run test:echo`: 149/149 pass, including 14 new navigation lifecycle tests
+- `npm run test:echo`: 150/150 pass, including 14 new navigation lifecycle tests
   against the real router (offer/accept, `open it`, `yes please`, `show me`,
   no-pending ambiguity, cancel, 60 s expiry, replacement, role change, session
   isolation, logout revocation, cross-account rejection, provider bypass,
