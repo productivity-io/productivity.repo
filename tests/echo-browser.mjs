@@ -521,6 +521,7 @@ try {
     return host && !host.shadowRoot.querySelector('textarea').disabled;
   });
   const beforeRealEngine = new URL(page.url()).pathname;
+  const trafficBeforeRealEngine = traffic.length;
   await send('Where can I see my attendance?');
   assert.equal(new URL(page.url()).pathname, beforeRealEngine, 'the offer itself must not navigate');
   assert.match(await widget.locator('.assistant').last().textContent(), /Attendance/);
@@ -528,6 +529,7 @@ try {
   await page.waitForURL('**/attendance');
   assert.equal(new URL(page.url()).pathname, '/attendance', 'accepted offer must change the real route');
   assert.match(await widget.locator('.assistant').last().textContent(), /You’re now on Attendance/);
+  assert.equal(traffic.length, trafficBeforeRealEngine, 'the built-in engine, not the mock transport, served this flow');
   await page.unroute('**/api/echo/config');
   // Restore the mock-backed widget for the remaining stop/reset/speech checks.
   await page.reload();
@@ -571,7 +573,7 @@ try {
   await page.reload();
   await disabledConfig;
   assert.equal(await page.locator('echo-chat-widget').count(), 0);
-  console.log('PASS portal commands, verified feedback/failure, contextual help/suggestions, clipboard success/failure, stop/reset/error recovery, optional speech (on/off, speed, cancel, overlap, failure fallback), mobile, logout abort and account isolation; fake SSE transport, not provider evidence');
+  console.log('PASS portal commands, verified feedback/failure, contextual help/suggestions, clipboard success/failure, stop/reset/error recovery, optional speech (on/off, speed, cancel, overlap, failure fallback), display modes, mobile, logout abort and account isolation; mock SSE for command flows plus a real built-in-engine follow-up navigation run (still not provider evidence)');
 } finally {
   if (browser) await browser.close();
   for (const child of children) if (child.exitCode === null) child.kill();
