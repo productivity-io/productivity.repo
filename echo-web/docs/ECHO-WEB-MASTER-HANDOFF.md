@@ -40,6 +40,24 @@ Implemented:
    different destination, by executing, by an unrelated reply, by a role change,
    by a second account, and by logout/reset.
 
+## Phase 2 - expandable and full-screen workspace (2026-11-09)
+
+The widget panel now has three presentation modes on one mounted conversation:
+compact (380 px), expanded (min(720 px, 92vw)) and full screen (100vw x 100dvh
+with a centred readable column). The header gains a size button that cycles
+compact -> expanded -> full -> compact, with `aria-label` updated per mode
+("Expand chat", "Full screen", "Restore size"). Escape restores compact before
+closing. The mode persists in `sessionStorage` (`echo-widget-mode-v1`) but the
+conversation, draft text, speech settings and pending server offers are never
+unmounted or reset by a mode change.
+
+Verified in the browser regression at 1280x850: the panel widens on expand, fills
+the viewport in full screen, returns to compact, the URL never changes, and the
+message count is identical before and after each switch.
+
+Microphone input, wake-word detection and admin data retrieval are **not**
+implemented; see "Remaining priorities" below.
+
 ## What changed
 
 1. **FreeLLMAPI is the primary brain.** Natural conversation goes to the
@@ -241,6 +259,21 @@ Environment Variables and redeploy. Do not use `VITE_*` variables. After deploy,
 verify `/api/echo/provider` reports `configured: true` and `reachable: true`,
 and confirm a model-only prompt returns provider metadata. HTTP 200 or Ready
 status alone is not provider proof. Do not force-push.
+
+## Remaining priorities (not implemented)
+
+1. **Spoken input and wake word.** The widget has TTS only. A mic button using
+the browser `SpeechRecognition` API is the next step; continuous "Echo" wake
+word is limited by browser background-tab suspension and by the browser's own
+speech service, so it must be documented as foreground-only. No audio is sent to
+FreeLLMAPI today because there is no audio capture at all.
+2. **Authorized data retrieval.** No `get_authorized_*` tools exist. The portal
+API is read-only for the signed-in account and there is no documented grade
+projection feature, so ECHO must not invent one. Any future tool layer must
+reuse `req.auth`, scope by account, and keep model context free of raw records.
+3. **Charts/tables in the workspace.** `recharts` is already a dependency, but
+ECHO renders text only. Structured results need server-validated payloads first.
+4. **File upload / multimodal input.** Not present.
 
 ## Exact handoff paths
 

@@ -32,13 +32,20 @@
     .voice-note{color:#8a4b00;text-align:right;flex:1}.voice-note:empty{display:none}
     @media(max-width:440px){.panel{right:10px;left:10px;bottom:82px;width:auto;height:70dvh}.launcher{right:12px;bottom:14px}}
     @media(prefers-reduced-motion:reduce){*{scroll-behavior:auto!important}}
+    /* Display modes: the conversation stays mounted, so switching never starts a new chat. */
+    :host([data-mode="expanded"]) .panel{width:min(720px,92vw);height:min(780px,88dvh)}
+    :host([data-mode="full"]) .panel{inset:0;width:100vw;height:100dvh;max-width:none;max-height:none;border:0;border-radius:0;z-index:2147483600}
+    :host([data-mode="full"]) .messages{padding:24px max(16px,calc((100vw - 920px)/2))}
+    :host([data-mode="full"]) form{padding:16px max(16px,calc((100vw - 920px)/2))}
+    :host([data-mode="full"]) .suggestions{padding:0 max(16px,calc((100vw - 920px)/2)) 8px}
+    :host([data-mode="full"]) .status{padding:0 max(16px,calc((100vw - 920px)/2)) 6px}
   `;
   shadow.append(style);
   const surface = document.createElement("div");
   surface.innerHTML = `
     <button class="launcher" type="button" aria-expanded="false" aria-controls="echo-panel">Chat</button>
     <section class="panel" id="echo-panel" role="dialog" aria-label="Website assistant" hidden>
-      <header><h2>Website assistant</h2><button class="plain voice" type="button" aria-pressed="false" aria-label="Spoken replies off" title="Spoken replies">🔇</button><button class="plain reset" type="button">New chat</button><button class="plain close" type="button" aria-label="Close chat">✕</button></header>
+      <header><h2>Website assistant</h2><button class="plain voice" type="button" aria-pressed="false" aria-label="Spoken replies off" title="Spoken replies">🔇</button><button class="plain reset" type="button">New chat</button><button class="plain size" type="button" aria-label="Expand chat" title="Expand">⤢</button><button class="plain close" type="button" aria-label="Close chat">✕</button></header>
       <div class="messages" role="log" aria-live="polite" aria-relevant="additions text"></div>
       <div class="suggestions" role="group" aria-label="Page suggestions"></div>
       <div class="status" role="status"></div>
@@ -58,6 +65,24 @@
   const reset = shadow.querySelector(".reset");
   const stop = shadow.querySelector(".stop");
   const suggestions = shadow.querySelector(".suggestions");
+  const sizeButton = shadow.querySelector(".size");
+  // Compact -> expanded -> full screen -> compact. Only presentation changes; nothing is
+  // unmounted, so conversation, draft text and speech settings survive every switch.
+  const MODE_KEY = "echo-widget-mode-v1";
+  const modeLabels = { compact: "Expand chat", expanded: "Full screen", full: "Restore size" };
+  const validMode = value => ["compact", "expanded", "full"].includes(value) ? value : "compact";
+  let mode = (() => { try { return validMode(JSON.parse(sessionStorage.getItem(MODE_KEY) || '"compact"')); } catch { return "compact"; } })();
+  function applyMode(next) {
+    mode = validMode(next);
+    host.dataset.mode = mode;
+    sizeButton.setAttribute("aria-label", modeLabels[mode]);
+    sizeButton.title = modeLabels[mode];
+    sizeButton.textContent = mode === "full" ? "⤡" : "⤢";
+    try { sessionStorage.setItem(MODE_KEY, JSON.stringify(mode)); } catch {}
+    log.scrollTop = log.scrollHeight;
+  }
+  sizeButton.addEventListener("click", () => applyMode(mode === "compact" ? "expanded" : mode === "expanded" ? "full" : "compact"));
+  applyMode(mode);
   let token = null;
   let busy = false;
   let config = null;
@@ -395,7 +420,12 @@
     if (config) input.focus();
   });
   shadow.querySelector(".close").addEventListener("click", close);
-  panel.addEventListener("keydown", event => { if (event.key === "Escape") close(); });
+  panel.addEventListener("keydown", event => {
+    if (event.key !== "Escape") return;
+    // Escape restores the compact panel first, then closes it.
+    if (mode !== "compact") applyMode("compact");
+    else close();
+  });
   input.addEventListener("keydown", event => {
     if (event.key === "Enter" && !event.shiftKey && !event.isComposing) {
       event.preventDefault();

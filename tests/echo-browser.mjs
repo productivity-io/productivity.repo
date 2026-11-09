@@ -482,6 +482,24 @@ try {
   const silentCount = (await speechState()).spoken.length;
   await send('This reply should be silent.');
   assert.equal((await speechState()).spoken.length, silentCount, 'voice off produces no audio');
+  // ---------- Expandable / full-screen workspace ----------
+  const compactBox = await widget.locator('.panel').boundingBox();
+  const assistantCount = await widget.locator('.assistant').count();
+  const routeBeforeResize = new URL(page.url()).pathname;
+  await widget.getByRole('button', { name: 'Expand chat', exact: true }).click();
+  await page.waitForFunction(() => document.querySelector('echo-chat-widget').dataset.mode === 'expanded');
+  const expandedBox = await widget.locator('.panel').boundingBox();
+  assert.ok(expandedBox.width > compactBox.width, 'expanded mode widens the panel');
+  assert.equal(await widget.locator('.assistant').count(), assistantCount, 'expanding preserves the conversation');
+  await widget.getByRole('button', { name: 'Full screen', exact: true }).click();
+  await page.waitForFunction(() => document.querySelector('echo-chat-widget').dataset.mode === 'full');
+  const fullBox = await widget.locator('.panel').boundingBox();
+  assert.ok(fullBox.width >= 1200 && fullBox.height >= 800, 'full screen fills the viewport');
+  assert.equal(new URL(page.url()).pathname, routeBeforeResize, 'resizing never navigates');
+  await widget.getByRole('button', { name: 'Restore size', exact: true }).click();
+  await page.waitForFunction(() => document.querySelector('echo-chat-widget').dataset.mode === 'compact');
+  assert.ok((await widget.locator('.panel').boundingBox()).width <= 400, 'restore returns to compact');
+  assert.equal(await widget.locator('.assistant').count(), assistantCount, 'restoring preserves the conversation');
   // Suggestions remain usable and inside the viewport on mobile.
   await page.setViewportSize({ width: 390, height: 844 });
   const bounds = await widget.locator('.panel').boundingBox();
