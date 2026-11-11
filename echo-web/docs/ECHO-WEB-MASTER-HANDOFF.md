@@ -4,9 +4,10 @@ Updated: 2026-11-11. Local branch: `main`, based on `9d761e6`. FreeLLMAPI is
 ECHO's verified primary conversational provider; deterministic commands,
 security gates and offline fallback are preserved; optional free browser speech
 is implemented. Phase 1 (conversational follow-up navigation), Phase 4 (Lost &
-Found) and Phase 5 (attendance, assignments, contacts through a shared tool
-layer) are complete and verified end to end. ECHO is still routing without model
-tool-calling: data answers are composed server-side, not generated.
+Found), Phase 5 (attendance, assignments, contacts) and Phase 6 (timetable,
+announcements) are complete and verified end to end. FreeLLMAPI was re-verified
+live on 2026-11-11. ECHO still routes data deterministically: answers are composed
+server-side and no record reaches the model.
 
 ## Phase 1 - conversational follow-up navigation (2026-11-09)
 
@@ -194,6 +195,50 @@ boundaries were fixed during this work and are asserted by the existing suites:
 location questions ("where are my marks?") keep the navigation offer, and
 explanations ("tell me about assignments") are not answered with records.
 
+## Phase 6 - timetable and announcements (2026-11-11)
+
+Both modules reuse the same contract: host-supplied snapshot, sanitized shape in
+`server/services/echoTools.ts`, deterministic answer, optional cards.
+
+- **Timetable** reads only the signed-in student's own class and section (same
+  filter as the page). It answers "what's my next class?" (next non-cancelled
+  period after the current minute), a named weekday, today/tomorrow, which room a
+  subject uses, and lists periods with rooms, teachers and any substitution or
+  cancellation. Staff accounts get an explicit "own class only" limitation.
+- **Time and date handling.** The day is resolved with
+  `Intl.DateTimeFormat` in `ECHO_PORTAL_TIMEZONE` (default `UTC`), never the host
+  clock, and minute-of-day is computed in that zone. A weekend "today" points at
+  the next school day instead of inventing periods. Times are displayed exactly as
+  published; ECHO does not convert them. A regression test sets the zone to
+  `America/Los_Angeles` with a UTC date that falls on the previous day in
+  California and asserts the California weekday wins.
+- **Announcements** mirror `GET /api/announcements` visibility exactly: approved
+  notices, the account's own posts, or reviewer roles. Read state comes from that
+  account's `announcement_reads` rows, so "any unread announcements?" is real.
+  Keyword questions match title, content and category; emergency/critical priority
+  is carried into the answer and the card.
+- **Unchanged privacy.** Announcement and timetable text is data: it is rendered
+  text-only and never sent to a provider.
+
+### Updated coverage matrix
+
+| Module | Tool | Authorization | Status |
+| --- | --- | --- | --- |
+| Attendance | own sessions, per-subject rates | `students.userId = account id` | Implemented, tested |
+| Assignments | own class/section work + submissions, due/overdue filters | own class & section | Implemented, tested |
+| Contacts | published staff directory | any signed-in account | Implemented, tested |
+| Lost & Found | items and claim status | any signed-in account | Implemented, tested |
+| Timetable | own class periods, next class, rooms, substitutions | own class & section | Implemented, tested |
+| Announcements | visible notices, own unread state | mirrors `/api/announcements` | Implemented, tested |
+| Examinations / marks | none | needs a provider-privacy decision | Not implemented |
+| Leave, library, transport, portfolio | none | — | Not implemented |
+| Staff attendance / assignments / timetable | none | per-record staff scoping undesigned | Not implemented |
+
+23 tests now live in `tests/echo-tools.test.ts`; the new ones cover next-class
+resolution against a fixed clock, a named day, weekend fallback, time-zone
+correctness, room lookup, announcement listing, unread filtering, keyword search,
+an unreadable source, and no cross-account timetable exposure.
+
 ## What changed
 
 1. **FreeLLMAPI is the primary brain.** Natural conversation goes to the
@@ -240,11 +285,15 @@ explanations ("tell me about assignments") are not answered with records.
 
 Command: `ECHO_USE_DESKTOP_SETTINGS=true node tests/echo-freellm-provider.mjs`.
 
-- Real local gateway, 292 models visible.
+- Re-verified 2026-11-11: real local gateway, **305 models visible**.
 - Real multi-turn conversation; synthetic code `QX-7319` recalled on turn 2.
 - Provider `freellmapi`, model `command-a-plus-05-2026`, route
-  `cohere/command-a-plus-05-2026`; turns 1554 ms and 1580 ms.
+  `cohere/command-a-plus-05-2026`; turns **1192 ms and 1078 ms**.
 - The live browser widget received the model-generated marker `PLUMAGE`.
+- The gateway port `127.0.0.1:31415` was also confirmed open in this environment.
+  ECHO itself reports `configured: false` unless the desktop credentials are
+  opted into, which is why the model test passes `ECHO_USE_DESKTOP_SETTINGS=true`.
+  A port being open is not evidence by itself; the passing model test is.
 - An earlier run routed to `qwen/qwen3.8-27b` via `groq`, confirming dynamic
   routing. Do not hardcode an upstream model in tests.
 - Credentials were read from the existing FreeLLMAPI desktop store only with
@@ -255,7 +304,7 @@ Command: `ECHO_USE_DESKTOP_SETTINGS=true node tests/echo-freellm-provider.mjs`.
 
 | Check | Result |
 | --- | --- |
-| 175 unit/integration tests: config, commands, conversation, navigation, Lost & Found, module tools, security | PASS |
+| 185 unit/integration tests: config, commands, conversation, navigation, Lost & Found, module tools, security | PASS |
 | `tsc --noEmit` | PASS |
 | production `vite build` | PASS |
 | full browser regression | PASS |
@@ -290,6 +339,7 @@ FREELLMAPI_BASE_URL=https://<public-https-gateway>/v1
 FREELLMAPI_API_KEY=<secret>
 FREELLMAPI_MODEL=auto:reliable
 ECHO_ALLOW_PAID_PROVIDER=false
+ECHO_PORTAL_TIMEZONE=America/Los_Angeles
 ECHO_SESSION_SECRET=<long random value>
 SESSION_SECRET=<long random value>
 PORTAL_BOOTSTRAP_PASSWORD=<16+ char production bootstrap secret>
@@ -364,8 +414,9 @@ No credentials were exposed to frontend code. No paid provider is enabled.
 - `server/services/echoData.ts`: authorized read-only Lost & Found tool, field
   allowlist, intent detection, grounded answer composition, record cards.
 - `server/services/echoTools.ts`: shared module tools (attendance, assignments,
-  contacts), intent boundaries, aggregation, cross-module memory.
-- `tests/echo-tools.test.ts`: 14 module-tool, memory and authorization tests.
+  contacts, timetable, announcements), zone-aware date handling, intent
+  boundaries, aggregation, cross-module memory.
+- `tests/echo-tools.test.ts`: 23 module-tool, memory and authorization tests.
 - `tests/echo-lostfound.test.ts`: 12 Lost & Found retrieval, memory and
   authorization tests.
 - `server/index.ts`: authenticated `/api/echo/config`, `/api/echo/provider`, ECHO
@@ -399,10 +450,12 @@ conversational follow-ups). Phase 2 workspace modes: `6cef2ab`
 wake word). Phase 4 Lost & Found: `708fe80`
 (feat(echo): answer Lost & Found questions from authorized records). Phase 5
 module tools: `4a99067` (feat(echo): generalize authorized read-only tools across
-modules). Documentation commits sit on top; use `git log --oneline` for the exact
-current HEAD.
+modules). Phase 6 timetable and announcements: `ad0e592`
+(feat(echo): read timetable and announcements with zone-aware dates).
+Documentation commits sit on top; use `git log --oneline` for the exact current
+HEAD.
 
-`npm run test:echo`: **175/175 PASS**.
+`npm run test:echo`: **185/185 PASS**.
 `tsc --noEmit`: PASS.
 `npm run build`: PASS (2045 modules).
 `npm run test:echo:browser`: PASS, including the real built-in engine run.
@@ -419,15 +472,19 @@ status alone is not provider proof. Do not force-push.
 
 ## Remaining priorities (not implemented)
 
-1. **Remaining modules.** Attendance, assignments, contacts and Lost & Found have
-   tools. Still unsupported through ECHO: examinations/marks, timetable,
-   announcements, leave, library, transport, portfolio, and any staff-scoped
-   records. Examinations need a privacy decision before implementation (nothing
-   private is sent to a provider today; answers would be composed server-side).
-   Timetable and announcements are the cheapest next additions - both are
-   read-only and already served by `/api/timetable` and `/api/announcements`.
-   Staff attendance/assignment rows stay out until per-record staff scoping is
-   designed, because a teacher's view spans every student.
+1. **Remaining modules.** Examinations/marks, leave, library, transport and
+   portfolio have no tool. Marks need a privacy decision first (nothing private is
+   sent to a provider today; answers would be composed server-side). Staff rows
+   stay out until per-record scoping is designed, because a teacher's view spans
+   every student.
+2. **Model-driven tool selection.** Not implemented. Routing is deterministic by
+   design so an injected record cannot nominate a tool. A safe design would let a
+   model propose `{tool, args}` and have the server validate the name against this
+   allowlist, re-derive identity from the session, and ignore any argument that
+   names another account. Do not build this on prompt trust.
+3. **Charts.** No chart is rendered. Cards and text only; `recharts` is available
+   and attendance/assignment data is now structured enough to chart once there is
+   a validated schema.
 2. **Charts/tables in the workspace.** `recharts` is already a dependency, but
 ECHO renders text only. Structured results need server-validated payloads first,
 and only where real supported data exists.
@@ -458,16 +515,18 @@ command/conversation/Stop/TTS path) are complete. FreeLLMAPI is still the primar
 conversational brain, with deterministic commands, security gates, offline
 fallback and free browser speech in both directions.
 
-Phase 4 (Lost & Found) and Phase 5 (attendance, assignments and contacts through
-the shared `server/services/echoTools.ts` layer, with cross-module subject memory)
-are complete. Next priorities, in order: (1) timetable and announcement tools,
-then examinations only after a privacy decision; (2) charts for validated numeric
-results. The portal has no documented grade-projection feature, so do not invent
-one. Real microphone and real-device audio verification still needs hardware this
-environment lacks.
+Phases 4-6 are complete: Lost & Found, attendance, assignments, contacts,
+timetable and announcements, all through `server/services/echoTools.ts` with
+cross-module subject memory. FreeLLMAPI re-verified live on 2026-11-11
+(305 models, `command-a-plus-05-2026`, 1.08-1.19 s turns). Next priorities, in
+order: (1) examinations only after a privacy decision; (2) model-driven tool
+selection with server-side allowlisting; (3) charts for validated attendance and
+assignment data. The portal has no documented grade-projection feature, so do not
+invent one. Real microphone and real-device audio verification still needs
+hardware this environment lacks.
 
 Do not recreate completed features, weaken tests or enable a paid provider.
-After any change, rerun `npm run test:echo` (175 tests), `npx tsc --noEmit`,
+After any change, rerun `npm run test:echo` (185 tests), `npx tsc --noEmit`,
 `npm run build` and `npm run test:echo:browser`; the opt-in provider test needs
 the FreeLLMAPI desktop gateway. Keep the Markdown/PDF handoffs and
 `F:\ECHO-Handoff` copies current. Verify the deployed site after pushing; do not
