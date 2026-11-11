@@ -669,6 +669,52 @@ routed multi-module prompt answers with both modules on the deployed origin.
 HTTP 200 or Ready status alone is not provider proof. Do not use `VITE_*`
 variables and do not force-push.
 
+## Collaboration and integration safety (2026-11-11)
+
+A frontend redesign is running in parallel. Backend work now happens on
+`feature/echo-durable-integration`; `main` is not pushed to directly any more.
+
+- **Ownership boundary.** The frontend owns `src/**`, widget markup and styles, and
+  page routes. This branch touches only `server/**`, `tests/**`, `.env.example`,
+  `package.json` scripts and documentation. No UI component, route, CSS class or
+  widget file was modified.
+- **API contracts stay stable.** Endpoints, payload shapes and SSE events are
+  unchanged. The one behavioural change is `/uploads/*`: the URL shape is
+  identical, but reads now require a session and are limited to the uploader,
+  staff, or a file linked from an announcement, assignment or submission.
+  Signed-in pages keep working because the browser sends the session cookie; a
+  redesign must not fetch uploads without credentials or cross-origin.
+- **ECHO widget unchanged.** `/api/echo/config`, session creation, the
+  `meta`/`delta`/`done`/`error` SSE events, record cards and navigation actions are
+  identical.
+- **Merge discipline.** Fetch `origin/main` before any merge and do not auto-resolve
+  unfamiliar conflicts or pick a side. Conflicts in `src/**` go to the frontend
+  owner, `server/**` to the backend owner, and shared `package.json` changes are
+  coordinated. Coworker commits are never reverted or force-pushed over.
+- **Verification.** `npm run test:integration` runs TypeScript, the 204 unit tests,
+  the upload access test, the production build and both ECHO browser suites on the
+  integrated tree.
+- **Pull request.** The branch is pushed and ready for review; nothing merges until
+  the integration suite passes on the merged result. The full interface list and
+  PR checklist live in `ECHO-INTEGRATION-CONTRACT.md`.
+
+### Upstream integration (2026-11-12)
+
+`origin/main` advanced to `1762660`, a UI-only commit by `lgkx7d`
+(`feat(ui): MCB ultimate enterprise dashboard transformation`): 20 files under
+`src/**` plus `index.html`, `index.css` and `scripts/capture-visuals.mjs`. It
+contains no server, authentication, routing, upload or ECHO widget change.
+
+- Merged into `feature/echo-durable-integration` as `99790f2` with **no
+  conflicts**; no UI file was edited by the backend during the merge.
+- `npm run test:integration` passed on the merged tree: 204/204 tests, upload
+  access, restart persistence, production build, ECHO browser regression and tool
+  routing. Login selectors, dashboard render, launcher, navigation offers and
+  account isolation all still work with the redesigned pages.
+- One earlier run failed with a transient Chromium `Target crashed` in
+  `browser.newPage`; the suite passed alone and the immediate rerun passed, so it
+  is recorded as environment flakiness rather than an integration break.
+
 ## Remaining priorities (not implemented)
 
 1. **Remaining modules.** Examinations/marks, leave, library, transport and
