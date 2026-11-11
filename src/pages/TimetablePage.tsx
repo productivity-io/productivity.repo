@@ -8,9 +8,15 @@ import {
   AlertCircle,
   Edit3,
   X,
+  Calendar,
+  Layers,
+  Sparkles,
 } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 import { apiFetch } from '../lib/api';
+import { MetricCard } from '../components/ui/MetricCard';
+import { Badge } from '../components/ui/Badge';
+import { Button } from '../components/ui/Button';
 
 const DAYS = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday'];
 
@@ -83,27 +89,61 @@ export function TimetablePage() {
   });
 
   const activeAlerts = filteredSlots.filter((s: any) => s.status === 'substituted' || s.status === 'cancelled');
+  const labPeriods = filteredSlots.filter((s: any) => (s.roomNumber || '').toLowerCase().includes('lab')).length;
 
   return (
     <div className="space-y-6">
+      {/* KPI Summary Cards */}
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+        <MetricCard
+          title="Scheduled Periods"
+          value={filteredSlots.length}
+          trend={{ direction: 'neutral', value: '7 per day' }}
+          icon={<Clock className="w-5 h-5" />}
+          iconColor="slate"
+        />
+        <MetricCard
+          title="Active Substitutions"
+          value={activeAlerts.length}
+          trend={{ direction: activeAlerts.length > 0 ? 'down' : 'up', value: activeAlerts.length > 0 ? 'Notice active' : 'All regular faculty' }}
+          icon={<AlertCircle className="w-5 h-5" />}
+          iconColor={activeAlerts.length > 0 ? 'amber' : 'emerald'}
+        />
+        <MetricCard
+          title="Lab / Practical Hours"
+          value={labPeriods}
+          trend={{ direction: 'neutral', value: 'Physics & Chem labs' }}
+          icon={<Layers className="w-5 h-5" />}
+          iconColor="blue"
+        />
+        <MetricCard
+          title="Academic Session"
+          value="Week 12"
+          subtitle="Term I In-Session"
+          trend={{ direction: 'neutral', value: 'On track' }}
+          icon={<Calendar className="w-5 h-5" />}
+          iconColor="slate"
+        />
+      </div>
+
       {/* Header */}
-      <div className="bg-white rounded-2xl border border-slate-200 p-6 flex flex-col lg:flex-row lg:items-center justify-between gap-4">
+      <div className="bg-white rounded-xl border border-slate-200/80 p-5 sm:p-6 flex flex-col lg:flex-row lg:items-center justify-between gap-4">
         <div>
-          <h2 className="font-heading text-xl font-bold text-slate-900 flex items-center gap-2">
+          <h2 className="font-heading text-lg sm:text-xl font-bold text-slate-900 flex items-center gap-2">
             <Clock className="w-5 h-5 text-blue-700" />
-            <span>Academic Timetable & Substitution Schedule</span>
+            <span>Academic Schedule & Room Allocations</span>
           </h2>
           <p className="text-xs sm:text-sm text-slate-500 mt-0.5">
-            Daily & weekly period schedules, laboratory allocations, break intervals, and live substitution notices.
+            Synchronized period schedules, laboratory practical allocations, break intervals, and live substitution notices.
           </p>
         </div>
 
         <div className="flex flex-wrap items-center gap-2">
           {user?.role === 'teacher' && (
-            <div className="flex p-1 bg-slate-100 rounded-xl">
+            <div className="flex p-1 bg-slate-100 rounded-lg">
               <button
                 onClick={() => setTeacherViewMode('class')}
-                className={`px-3 py-1 rounded-lg text-xs font-semibold ${
+                className={`px-3 py-1.5 rounded-md text-xs font-semibold transition-all cursor-pointer ${
                   teacherViewMode === 'class' ? 'bg-white text-slate-900 shadow-2xs' : 'text-slate-600'
                 }`}
               >
@@ -111,7 +151,7 @@ export function TimetablePage() {
               </button>
               <button
                 onClick={() => setTeacherViewMode('personal')}
-                className={`px-3 py-1 rounded-lg text-xs font-semibold ${
+                className={`px-3 py-1.5 rounded-md text-xs font-semibold transition-all cursor-pointer ${
                   teacherViewMode === 'personal' ? 'bg-white text-slate-900 shadow-2xs' : 'text-slate-600'
                 }`}
               >
@@ -124,7 +164,7 @@ export function TimetablePage() {
             <select
               value={selectedClassSection}
               onChange={e => setSelectedClassSection(e.target.value)}
-              className="px-3 py-2 rounded-xl border border-slate-200 text-xs font-semibold bg-white"
+              className="px-3 py-2 rounded-lg border border-slate-200 text-xs font-semibold bg-white text-slate-800 focus:outline-none focus:ring-2 focus:ring-blue-600"
             >
               <option value="1-1">Grade 10 — Section A (Room 302)</option>
               <option value="1-2">Grade 10 — Section B (Room 304)</option>

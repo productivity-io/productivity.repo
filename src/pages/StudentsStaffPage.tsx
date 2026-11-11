@@ -13,6 +13,10 @@ import {
 } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 import { apiFetch } from '../lib/api';
+import { MetricCard } from '../components/ui/MetricCard';
+import { Badge } from '../components/ui/Badge';
+import { Button } from '../components/ui/Button';
+import { PageHeader } from '../components/ui/PageHeader';
 
 export function StudentsStaffPage() {
   const { user, showToast } = useAuth();
@@ -211,6 +215,39 @@ export function StudentsStaffPage() {
             )}
           </div>
         )}
+      </div>
+
+      {/* Directory Metrics Overview */}
+      <div className="grid grid-cols-2 sm:grid-cols-4 gap-3.5 sm:gap-4">
+        <MetricCard
+          title="Enrolled Scholars"
+          value={data.students?.length || 0}
+          icon={<Users className="w-5 h-5" />}
+          iconColor="blue"
+          subtitle="Active student profiles"
+          badge={<Badge variant="info" size="xs">Grades 9-12</Badge>}
+        />
+        <MetricCard
+          title="Teaching Faculty"
+          value={data.teachers?.length || 0}
+          icon={<Briefcase className="w-5 h-5" />}
+          iconColor="emerald"
+          subtitle="Subject specialists"
+        />
+        <MetricCard
+          title="Coordinators"
+          value={data.coordinators?.length || 0}
+          icon={<Layers className="w-5 h-5" />}
+          iconColor="purple"
+          subtitle="Curriculum leadership"
+        />
+        <MetricCard
+          title="Class Sections"
+          value={data.sections?.length || 4}
+          icon={<Users className="w-5 h-5" />}
+          iconColor="slate"
+          subtitle="Homeroom divisions"
+        />
       </div>
 
       {/* Section Tabs */}

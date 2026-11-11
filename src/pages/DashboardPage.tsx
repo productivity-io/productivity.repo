@@ -20,6 +20,7 @@ import {
   FileCheck2,
   Activity,
   Layers,
+  MessageSquare,
 } from 'lucide-react';
 import {
   ResponsiveContainer,
@@ -33,6 +34,11 @@ import {
 } from 'recharts';
 import { useAuth } from '../context/AuthContext';
 import { apiFetch } from '../lib/api';
+import { Button } from '../components/ui/Button';
+import { Badge } from '../components/ui/Badge';
+import { Card, CardHeader, CardTitle, CardDescription, CardContent } from '../components/ui/Card';
+import { MetricCard } from '../components/ui/MetricCard';
+import { PageHeader } from '../components/ui/PageHeader';
 
 export function DashboardPage() {
   const { user, academicYear, showToast } = useAuth();
@@ -97,9 +103,9 @@ export function DashboardPage() {
     return (
       <div className="space-y-6">
         {/* Welcome Hero Card */}
-        <div className="bg-white rounded-2xl border border-slate-200/90 p-6 shadow-2xs flex flex-col md:flex-row md:items-center justify-between gap-6">
+        <div className="bg-white rounded-2xl border border-slate-200/80 p-5 sm:p-6 shadow-xs flex flex-col md:flex-row md:items-center justify-between gap-5">
           <div className="flex items-center gap-4">
-            <div className="w-16 h-16 rounded-2xl bg-blue-700 text-white font-heading font-bold text-xl flex items-center justify-center shadow-sm shrink-0">
+            <div className="w-14 h-14 sm:w-16 sm:h-16 rounded-2xl bg-slate-900 text-white font-heading font-bold text-lg sm:text-xl flex items-center justify-center shadow-xs shrink-0 tracking-tight">
               {stu.fullName
                 .split(' ')
                 .map((n: string) => n[0])
@@ -108,141 +114,120 @@ export function DashboardPage() {
             </div>
             <div>
               <div className="flex flex-wrap items-center gap-2">
-                <span className="text-xs font-mono font-semibold px-2.5 py-0.5 rounded-md bg-slate-100 text-slate-700">
+                <Badge variant="secondary" size="xs" className="font-mono">
                   {stu.schoolId}
-                </span>
-                <span className="text-xs font-semibold px-2.5 py-0.5 rounded-md bg-blue-50 text-blue-700">
-                  {stu.className} — Section {stu.sectionName} (Roll #{stu.rollNo})
-                </span>
-                <span className="text-xs font-medium px-2.5 py-0.5 rounded-md bg-amber-50 text-amber-800">
+                </Badge>
+                <Badge variant="info" size="xs">
+                  {stu.className} — Sec {stu.sectionName} (Roll #{stu.rollNo})
+                </Badge>
+                <Badge variant="warning" size="xs">
                   {stu.house}
-                </span>
+                </Badge>
               </div>
-              <h2 className="font-heading text-2xl font-bold text-slate-900 mt-1.5">
+              <h2 className="font-heading text-xl sm:text-2xl font-bold text-slate-900 mt-1.5 tracking-tight">
                 Welcome back, {stu.fullName}
               </h2>
               <p className="text-xs sm:text-sm text-slate-500 mt-0.5">
-                Academic Session {academicYear} • Homeroom: {stu.roomNumber}
+                Session AY {academicYear} • Homeroom: {stu.roomNumber}
               </p>
             </div>
           </div>
 
           {/* Quick Shortcuts */}
           <div className="flex flex-wrap items-center gap-2">
-            <button
+            <Button
+              variant="primary"
+              size="sm"
+              leftIcon={<BookOpen className="w-3.5 h-3.5" />}
               onClick={() => navigate('/assignments')}
-              className="px-3.5 py-2 rounded-xl bg-blue-700 hover:bg-blue-800 text-white text-xs font-semibold flex items-center gap-1.5 shadow-2xs transition-colors"
             >
-              <BookOpen className="w-3.5 h-3.5" />
-              <span>Submit Homework</span>
-            </button>
-            <button
+              Submit Homework
+            </Button>
+            <Button
+              variant="outline"
+              size="sm"
+              leftIcon={<Briefcase className="w-3.5 h-3.5 text-blue-600" />}
               onClick={() => navigate('/portfolio')}
-              className="px-3.5 py-2 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-800 text-xs font-semibold flex items-center gap-1.5 transition-colors"
             >
-              <Briefcase className="w-3.5 h-3.5 text-blue-700" />
-              <span>My Portfolio</span>
-            </button>
-            <button
+              Portfolio
+            </Button>
+            <Button
+              variant="secondary"
+              size="sm"
+              leftIcon={<Bus className="w-3.5 h-3.5 text-slate-500" />}
               onClick={() => navigate('/transport')}
-              className="px-3.5 py-2 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-800 text-xs font-semibold flex items-center gap-1.5 transition-colors"
             >
-              <Bus className="w-3.5 h-3.5 text-slate-600" />
-              <span>Bus {stu.routeNumber || 'RT-101'}</span>
-            </button>
+              Bus {stu.routeNumber || 'RT-101'}
+            </Button>
           </div>
         </div>
 
         {/* 4 Key Student Stat Cards */}
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-          <div
-            onClick={() => navigate('/attendance')}
-            className="bg-white p-5 rounded-2xl border border-slate-200/90 hover:border-blue-300 transition-all cursor-pointer shadow-2xs"
-          >
-            <div className="flex items-center justify-between">
-              <span className="text-xs font-semibold text-slate-500 uppercase tracking-wider">Attendance Rate</span>
-              <div className="w-9 h-9 rounded-xl bg-emerald-50 text-emerald-700 flex items-center justify-center">
-                <CalendarCheck className="w-5 h-5" />
-              </div>
-            </div>
-            <div className="mt-3 flex items-baseline justify-between">
-              <span className="font-heading text-2xl font-bold text-slate-900">{data.attendancePercentage}%</span>
-              <span className="text-xs font-semibold px-2 py-0.5 rounded-full bg-emerald-50 text-emerald-700 capitalize">
-                Today: {data.todayAttendance?.status || 'Present'}
-              </span>
-            </div>
-            <div className="mt-2 w-full h-1.5 bg-slate-100 rounded-full overflow-hidden">
-              <div className="h-full bg-emerald-600 rounded-full" style={{ width: `${data.attendancePercentage}%` }} />
-            </div>
+          <div onClick={() => navigate('/attendance')} className="cursor-pointer">
+            <MetricCard
+              title="Attendance Rate"
+              value={`${data.attendancePercentage}%`}
+              icon={<CalendarCheck className="w-5 h-5" />}
+              iconColor="emerald"
+              subtitle={`Today: ${data.todayAttendance?.status || 'Present'}`}
+              badge={
+                <Badge variant={data.todayAttendance?.status === 'absent' ? 'danger' : 'success'} size="xs" dot>
+                  {data.todayAttendance?.status || 'Present'}
+                </Badge>
+              }
+            />
           </div>
 
-          <div
-            onClick={() => navigate('/assignments')}
-            className="bg-white p-5 rounded-2xl border border-slate-200/90 hover:border-blue-300 transition-all cursor-pointer shadow-2xs"
-          >
-            <div className="flex items-center justify-between">
-              <span className="text-xs font-semibold text-slate-500 uppercase tracking-wider">Pending Work</span>
-              <div className="w-9 h-9 rounded-xl bg-blue-50 text-blue-700 flex items-center justify-center">
-                <BookOpen className="w-5 h-5" />
-              </div>
-            </div>
-            <div className="mt-3 flex items-baseline justify-between">
-              <span className="font-heading text-2xl font-bold text-slate-900">
-                {data.pendingAssignments.length} Tasks
-              </span>
-              <span className="text-xs text-slate-500">
-                {data.allAssignments.filter((a: any) => a.submissionStatus === 'graded').length} graded
-              </span>
-            </div>
-            <p className="text-xs text-slate-500 mt-2 truncate">
-              Next due: {data.pendingAssignments[0]?.title || 'All caught up!'}
-            </p>
+          <div onClick={() => navigate('/assignments')} className="cursor-pointer">
+            <MetricCard
+              title="Pending Work"
+              value={`${data.pendingAssignments.length} Tasks`}
+              icon={<BookOpen className="w-5 h-5" />}
+              iconColor="blue"
+              subtitle={`${data.allAssignments.filter((a: any) => a.submissionStatus === 'graded').length} graded`}
+              badge={
+                <Badge variant={data.pendingAssignments.length > 0 ? 'warning' : 'secondary'} size="xs">
+                  {data.pendingAssignments.length > 0 ? 'Active' : 'Completed'}
+                </Badge>
+              }
+            />
           </div>
 
-          <div
-            onClick={() => navigate('/examinations')}
-            className="bg-white p-5 rounded-2xl border border-slate-200/90 hover:border-blue-300 transition-all cursor-pointer shadow-2xs"
-          >
-            <div className="flex items-center justify-between">
-              <span className="text-xs font-semibold text-slate-500 uppercase tracking-wider">Academic Standing</span>
-              <div className="w-9 h-9 rounded-xl bg-indigo-50 text-indigo-700 flex items-center justify-center">
-                <Award className="w-5 h-5" />
-              </div>
-            </div>
-            <div className="mt-3 flex items-baseline justify-between">
-              <span className="font-heading text-2xl font-bold text-slate-900">{stu.avgAcademicPercentage}%</span>
-              <span className="text-xs font-semibold px-2 py-0.5 rounded-full bg-indigo-50 text-indigo-700">
-                Grade A+
-              </span>
-            </div>
-            <p className="text-xs text-slate-500 mt-2">
-              Term I Finals start Nov 18, 2026
-            </p>
+          <div onClick={() => navigate('/examinations')} className="cursor-pointer">
+            <MetricCard
+              title="Academic Standing"
+              value={`${stu.avgAcademicPercentage}%`}
+              icon={<Award className="w-5 h-5" />}
+              iconColor="indigo"
+              subtitle="Term I Finals Nov 18"
+              trend={{
+                value: '+4.2%',
+                direction: 'up',
+                label: 'vs Unit Test I',
+              }}
+            />
           </div>
 
-          <div
-            onClick={() => navigate('/announcements')}
-            className="bg-white p-5 rounded-2xl border border-slate-200/90 hover:border-blue-300 transition-all cursor-pointer shadow-2xs"
-          >
-            <div className="flex items-center justify-between">
-              <span className="text-xs font-semibold text-slate-500 uppercase tracking-wider">Active Notices</span>
-              <div className="w-9 h-9 rounded-xl bg-amber-50 text-amber-700 flex items-center justify-center">
-                <Megaphone className="w-5 h-5" />
-              </div>
-            </div>
-            <div className="mt-3 flex items-baseline justify-between">
-              <span className="font-heading text-2xl font-bold text-slate-900">
-                {data.latestAnnouncements.length} Bulletins
-              </span>
-              {data.emergencyAlerts?.length > 0 && (
-                <span className="text-[11px] font-bold px-2 py-0.5 rounded-full bg-red-100 text-red-700">
-                  {data.emergencyAlerts.length} Urgent
-                </span>
-              )}
-            </div>
-            <p className="text-xs text-slate-500 mt-2 truncate">
-              {data.latestAnnouncements[0]?.title}
-            </p>
+          <div onClick={() => navigate('/announcements')} className="cursor-pointer">
+            <MetricCard
+              title="Active Notices"
+              value={`${data.latestAnnouncements.length} Bulletins`}
+              icon={<Megaphone className="w-5 h-5" />}
+              iconColor="amber"
+              subtitle={data.emergencyAlerts?.length > 0 ? `${data.emergencyAlerts.length} Critical Alert active` : 'No emergencies'}
+              badge={
+                data.emergencyAlerts?.length > 0 ? (
+                  <Badge variant="danger" size="xs" dot>
+                    Emergency
+                  </Badge>
+                ) : (
+                  <Badge variant="secondary" size="xs">
+                    Normal
+                  </Badge>
+                )
+              }
+            />
           </div>
         </div>
 
@@ -490,36 +475,52 @@ export function DashboardPage() {
 
         {/* Teacher KPI Cards */}
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-          <div onClick={() => navigate('/directory')} className="bg-white p-5 rounded-2xl border border-slate-200 cursor-pointer hover:border-blue-300">
-            <div className="text-xs font-semibold text-slate-500 uppercase">Assigned Classes & Students</div>
-            <div className="font-heading text-2xl font-bold text-slate-900 mt-2">
-              {data.stats.assignedClassesCount} Sections • {data.stats.totalStudentsCount} Students
-            </div>
-            <p className="text-xs text-slate-500 mt-1">Click to inspect student records & portfolios</p>
+          <div onClick={() => navigate('/directory')} className="cursor-pointer">
+            <MetricCard
+              title="Assigned Classes"
+              value={`${data.stats.assignedClassesCount} Sections`}
+              icon={<Users className="w-5 h-5" />}
+              iconColor="slate"
+              subtitle={`${data.stats.totalStudentsCount} Enrolled Students`}
+              badge={<Badge variant="secondary" size="xs">Active</Badge>}
+            />
           </div>
 
-          <div onClick={() => navigate('/assignments')} className="bg-white p-5 rounded-2xl border border-slate-200 cursor-pointer hover:border-blue-300">
-            <div className="text-xs font-semibold text-slate-500 uppercase">Submissions to Grade</div>
-            <div className="font-heading text-2xl font-bold text-blue-700 mt-2">
-              {data.stats.pendingToGradeCount} Pending
-            </div>
-            <p className="text-xs text-slate-500 mt-1">{data.teacherAssignments.length} active assignments published</p>
+          <div onClick={() => navigate('/assignments')} className="cursor-pointer">
+            <MetricCard
+              title="Grading Queue"
+              value={`${data.stats.pendingToGradeCount} Submissions`}
+              icon={<BookOpen className="w-5 h-5" />}
+              iconColor="blue"
+              subtitle={`${data.teacherAssignments.length} active assignments published`}
+              badge={<Badge variant="warning" size="xs">Pending Review</Badge>}
+            />
           </div>
 
-          <div onClick={() => navigate('/attendance')} className="bg-white p-5 rounded-2xl border border-slate-200 cursor-pointer hover:border-blue-300">
-            <div className="text-xs font-semibold text-slate-500 uppercase">Class Attendance Average</div>
-            <div className="font-heading text-2xl font-bold text-emerald-700 mt-2">
-              {data.stats.avgAttendancePercentage}%
-            </div>
-            <p className="text-xs text-slate-500 mt-1">Daily & subject-wise logs synced</p>
+          <div onClick={() => navigate('/attendance')} className="cursor-pointer">
+            <MetricCard
+              title="Class Attendance"
+              value={`${data.stats.avgAttendancePercentage}%`}
+              icon={<CalendarCheck className="w-5 h-5" />}
+              iconColor="emerald"
+              subtitle="Daily & subject logs synced"
+              trend={{
+                value: '+1.8%',
+                direction: 'up',
+                label: 'vs school mean',
+              }}
+            />
           </div>
 
-          <div onClick={() => navigate('/communication')} className="bg-white p-5 rounded-2xl border border-slate-200 cursor-pointer hover:border-blue-300">
-            <div className="text-xs font-semibold text-slate-500 uppercase">Student Requests & Alerts</div>
-            <div className="font-heading text-2xl font-bold text-amber-600 mt-2">
-              {data.stats.pendingRequestsCount} Actionable
-            </div>
-            <p className="text-xs text-slate-500 mt-1">Communication & attendance corrections</p>
+          <div onClick={() => navigate('/communication')} className="cursor-pointer">
+            <MetricCard
+              title="Student Requests"
+              value={`${data.stats.pendingRequestsCount} Actionable`}
+              icon={<MessageSquare className="w-5 h-5" />}
+              iconColor="amber"
+              subtitle="Communication & corrections"
+              badge={<Badge variant="info" size="xs">Needs Action</Badge>}
+            />
           </div>
         </div>
 
@@ -632,54 +633,56 @@ export function DashboardPage() {
 
       {/* 4 Executive KPI Cards */}
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-        <div onClick={() => navigate('/directory')} className="bg-white p-5 rounded-2xl border border-slate-200 cursor-pointer hover:border-blue-300">
-          <div className="flex items-center justify-between">
-            <span className="text-xs font-semibold text-slate-500 uppercase">Campus Strength</span>
-            <Users className="w-5 h-5 text-blue-700" />
-          </div>
-          <div className="font-heading text-2xl font-bold text-slate-900 mt-2">
-            {data.stats.totalStudents} Students
-          </div>
-          <div className="text-xs text-slate-500 mt-1">
-            {data.stats.totalTeachers} Teachers • {data.stats.totalCoordinators} Coordinators
-          </div>
+        <div onClick={() => navigate('/directory')} className="cursor-pointer">
+          <MetricCard
+            title="Campus Strength"
+            value={`${data.stats.totalStudents} Students`}
+            icon={<Users className="w-5 h-5" />}
+            iconColor="blue"
+            subtitle={`${data.stats.totalTeachers} Faculty • ${data.stats.totalCoordinators} Coordinators`}
+            badge={<Badge variant="secondary" size="xs">Enrolled</Badge>}
+          />
         </div>
 
-        <div onClick={() => navigate('/attendance')} className="bg-white p-5 rounded-2xl border border-slate-200 cursor-pointer hover:border-blue-300">
-          <div className="flex items-center justify-between">
-            <span className="text-xs font-semibold text-slate-500 uppercase">School-Wide Attendance</span>
-            <UserCheck className="w-5 h-5 text-emerald-600" />
-          </div>
-          <div className="font-heading text-2xl font-bold text-emerald-700 mt-2">
-            {data.stats.overallAttendance}%
-          </div>
-          <div className="text-xs text-slate-500 mt-1">Across all active grade sections</div>
+        <div onClick={() => navigate('/attendance')} className="cursor-pointer">
+          <MetricCard
+            title="School-Wide Attendance"
+            value={`${data.stats.overallAttendance}%`}
+            icon={<UserCheck className="w-5 h-5" />}
+            iconColor="emerald"
+            subtitle="Across all active grade sections"
+            trend={{
+              value: '+0.9%',
+              direction: 'up',
+              label: 'vs yesterday',
+            }}
+          />
         </div>
 
-        <div onClick={() => navigate('/examinations')} className="bg-white p-5 rounded-2xl border border-slate-200 cursor-pointer hover:border-blue-300">
-          <div className="flex items-center justify-between">
-            <span className="text-xs font-semibold text-slate-500 uppercase">Academic Mean & Completion</span>
-            <Award className="w-5 h-5 text-indigo-600" />
-          </div>
-          <div className="font-heading text-2xl font-bold text-slate-900 mt-2">
-            {data.stats.overallAcademic}% Avg
-          </div>
-          <div className="text-xs text-slate-500 mt-1">
-            Assignment Completion: {data.stats.assignmentCompletionRate}%
-          </div>
+        <div onClick={() => navigate('/examinations')} className="cursor-pointer">
+          <MetricCard
+            title="Academic Standing"
+            value={`${data.stats.overallAcademic}% Avg`}
+            icon={<Award className="w-5 h-5" />}
+            iconColor="indigo"
+            subtitle={`Completion Rate: ${data.stats.assignmentCompletionRate}%`}
+            badge={<Badge variant="info" size="xs">Term I</Badge>}
+          />
         </div>
 
-        <div onClick={() => navigate('/announcements')} className="bg-white p-5 rounded-2xl border border-slate-200 cursor-pointer hover:border-blue-300">
-          <div className="flex items-center justify-between">
-            <span className="text-xs font-semibold text-slate-500 uppercase">Pending Approvals</span>
-            <FileCheck2 className="w-5 h-5 text-amber-600" />
-          </div>
-          <div className="font-heading text-2xl font-bold text-amber-600 mt-2">
-            {data.stats.pendingApprovalsCount} Items
-          </div>
-          <div className="text-xs text-slate-500 mt-1">
-            {data.pendingAnnouncements.length} Circulars • {data.pendingLeaves.length} Leaves • {data.pendingPortfolios.length} Portfolios
-          </div>
+        <div onClick={() => navigate('/announcements')} className="cursor-pointer">
+          <MetricCard
+            title="Pending Approvals"
+            value={`${data.stats.pendingApprovalsCount} Items`}
+            icon={<FileCheck2 className="w-5 h-5" />}
+            iconColor="amber"
+            subtitle={`${data.pendingAnnouncements.length} Circulars • ${data.pendingLeaves.length} Leaves`}
+            badge={
+              <Badge variant={data.stats.pendingApprovalsCount > 0 ? 'warning' : 'success'} size="xs" dot>
+                {data.stats.pendingApprovalsCount > 0 ? 'Action Required' : 'All Clear'}
+              </Badge>
+            }
+          />
         </div>
       </div>
 

@@ -13,6 +13,10 @@ import {
 } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 import { apiFetch } from '../lib/api';
+import { MetricCard } from '../components/ui/MetricCard';
+import { Badge } from '../components/ui/Badge';
+import { Button } from '../components/ui/Button';
+import { PageHeader } from '../components/ui/PageHeader';
 
 export function AttendancePage() {
   const { user, showToast } = useAuth();
@@ -188,32 +192,43 @@ export function AttendancePage() {
         </div>
 
         {/* Summary KPI Cards */}
-        <div className="grid grid-cols-2 sm:grid-cols-5 gap-4">
-          <div className="bg-white p-4 rounded-2xl border border-slate-200">
-            <div className="text-xs font-semibold text-slate-500">Overall Attendance</div>
-            <div className="font-heading text-2xl font-bold text-blue-700 mt-1">{stu.attendancePercentage}%</div>
-            <div className="text-[11px] text-emerald-700 font-medium mt-0.5">Above 85% requirement</div>
-          </div>
-          <div className="bg-white p-4 rounded-2xl border border-slate-200">
-            <div className="text-xs font-semibold text-slate-500">Present Days</div>
-            <div className="font-heading text-2xl font-bold text-emerald-700 mt-1">{presentCount}</div>
-          </div>
-          <div className="bg-white p-4 rounded-2xl border border-slate-200">
-            <div className="text-xs font-semibold text-slate-500">Late Arrivals</div>
-            <div className="font-heading text-2xl font-bold text-amber-600 mt-1">{lateCount}</div>
-          </div>
-          <div className="bg-white p-4 rounded-2xl border border-slate-200">
-            <div className="text-xs font-semibold text-slate-500">Excused / Duty</div>
-            <div className="font-heading text-2xl font-bold text-indigo-600 mt-1">{excusedCount}</div>
-          </div>
-          <div className="bg-white p-4 rounded-2xl border border-slate-200">
-            <div className="text-xs font-semibold text-slate-500">Unexcused Absent</div>
-            <div className="font-heading text-2xl font-bold text-red-600 mt-1">{absentCount}</div>
-          </div>
+        <div className="grid grid-cols-2 sm:grid-cols-5 gap-3.5 sm:gap-4">
+          <MetricCard
+            title="Overall Attendance"
+            value={`${stu.attendancePercentage}%`}
+            iconColor="blue"
+            subtitle="Above 85% requirement"
+            badge={<Badge variant="success" size="xs">Compliant</Badge>}
+          />
+          <MetricCard
+            title="Present Days"
+            value={presentCount}
+            iconColor="emerald"
+            subtitle="Full sessions verified"
+          />
+          <MetricCard
+            title="Late Arrivals"
+            value={lateCount}
+            iconColor="amber"
+            subtitle="Morning bell delays"
+          />
+          <MetricCard
+            title="Excused / Duty"
+            value={excusedCount}
+            iconColor="indigo"
+            subtitle="Approved school duties"
+          />
+          <MetricCard
+            title="Unexcused Absent"
+            value={absentCount}
+            iconColor="rose"
+            subtitle="Requires medical slip"
+            badge={absentCount > 0 ? <Badge variant="danger" size="xs">Attention</Badge> : undefined}
+          />
         </div>
 
         {/* Tabs */}
-        <div className="flex items-center gap-2 border-b border-slate-200 pb-3">
+        <div className="flex items-center gap-2 border-b border-slate-200/80 pb-3 overflow-x-auto">
           {[
             { id: 'daily', label: 'Daily Homeroom Register & Calendar' },
             { id: 'subject', label: 'Subject-Wise Period Attendance' },
@@ -222,8 +237,10 @@ export function AttendancePage() {
             <button
               key={t.id}
               onClick={() => setStudentTab(t.id as any)}
-              className={`px-4 py-2 rounded-xl text-xs font-semibold transition-colors ${
-                studentTab === t.id ? 'bg-slate-900 text-white' : 'bg-white text-slate-600 border border-slate-200 hover:bg-slate-100'
+              className={`px-3.5 py-1.5 rounded-xl text-xs font-semibold whitespace-nowrap transition-all cursor-pointer ${
+                studentTab === t.id
+                  ? 'bg-slate-900 text-white shadow-xs'
+                  : 'bg-white text-slate-600 border border-slate-200/80 hover:bg-slate-50 hover:text-slate-900'
               }`}
             >
               {t.label}
