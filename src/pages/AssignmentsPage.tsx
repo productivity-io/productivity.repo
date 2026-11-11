@@ -10,18 +10,25 @@ import {
   Award,
   X,
   RotateCcw,
+  CheckCircle,
+  AlertCircle,
+  FileCheck2,
+  Layers,
 } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 import { apiFetch, uploadLocalFile } from '../lib/api';
 import { registerEchoSubjects } from '../lib/echoSubjectOptions';
+import { MetricCard } from '../components/ui/MetricCard';
+import { Badge } from '../components/ui/Badge';
+import { Button } from '../components/ui/Button';
 
-const STATUS_BADGES: Record<string, string> = {
-  assigned: 'bg-slate-100 text-slate-700',
-  in_progress: 'bg-amber-100 text-amber-800',
-  submitted: 'bg-blue-100 text-blue-800',
-  under_review: 'bg-indigo-100 text-indigo-800',
-  graded: 'bg-emerald-100 text-emerald-800',
-  overdue: 'bg-red-100 text-red-700',
+const STATUS_VARIANTS: Record<string, { variant: 'info' | 'warning' | 'success' | 'danger' | 'purple' | 'outline'; label: string }> = {
+  assigned: { variant: 'outline', label: 'Assigned' },
+  in_progress: { variant: 'warning', label: 'In Progress' },
+  submitted: { variant: 'info', label: 'Submitted' },
+  under_review: { variant: 'purple', label: 'Under Review' },
+  graded: { variant: 'success', label: 'Graded' },
+  overdue: { variant: 'danger', label: 'Overdue' },
 };
 
 export function AssignmentsPage() {
@@ -174,46 +181,125 @@ export function AssignmentsPage() {
   }
 
   const isStaff = user?.role !== 'student';
-  const assignmentsList = (data.assignments || []).filter((a: any) => {
+  const allAssignments = data.assignments || [];
+  const assignmentsList = allAssignments.filter((a: any) => {
     if (subjectFilter !== 'all' && String(a.subjectId) !== subjectFilter) return false;
     if (!isStaff && statusFilter !== 'all' && a.submission?.status !== statusFilter) return false;
     return true;
   });
 
+  // Calculate metrics for summary row
+  const studentTotal = allAssignments.length;
+  const studentGraded = allAssignments.filter((a: any) => a.submission?.status === 'graded').length;
+  const studentPending = allAssignments.filter((a: any) => ['assigned', 'in_progress', 'overdue'].includes(a.submission?.status)).length;
+  const studentSubmitted = allAssignments.filter((a: any) => ['submitted', 'under_review'].includes(a.submission?.status)).length;
+
+  const staffTotalSubmissions = allAssignments.reduce((acc: number, a: any) => acc + (a.submissions?.length || 0), 0);
+  const staffAwaiting = allAssignments.reduce((acc: number, a: any) => acc + (a.submissions?.filter((s: any) => s.status !== 'graded').length || 0), 0);
+  const staffGraded = allAssignments.reduce((acc: number, a: any) => acc + (a.submissions?.filter((s: any) => s.status === 'graded').length || 0), 0);
+
   return (
     <div className="space-y-6">
+      {/* KPI Summary Cards */}
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+        {!isStaff ? (
+          <>
+            <MetricCard
+              title="Assigned Work"
+              value={studentTotal}
+              trend={{ direction: 'neutral', value: 'All active' }}
+              icon={<BookOpen className="w-5 h-5" />}
+              iconColor="slate"
+            />
+            <MetricCard
+              title="Graded / Done"
+              value={studentGraded}
+              trend={{ direction: 'up', value: `${studentTotal > 0 ? Math.round((studentGraded / studentTotal) * 100) : 0}%`, label: 'completed' }}
+              icon={<CheckCircle className="w-5 h-5" />}
+              iconColor="emerald"
+            />
+            <MetricCard
+              title="Awaiting Evaluation"
+              value={studentSubmitted}
+              trend={{ direction: 'neutral', value: 'In review queue' }}
+              icon={<FileCheck2 className="w-5 h-5" />}
+              iconColor="blue"
+            />
+            <MetricCard
+              title="Pending Action"
+              value={studentPending}
+              trend={{ direction: studentPending > 0 ? 'down' : 'neutral', value: studentPending > 0 ? 'Action required' : 'All clear' }}
+              icon={<Clock className="w-5 h-5" />}
+              iconColor="amber"
+            />
+          </>
+        ) : (
+          <>
+            <MetricCard
+              title="Published Tasks"
+              value={studentTotal}
+              trend={{ direction: 'neutral', value: 'Active syllabus' }}
+              icon={<BookOpen className="w-5 h-5" />}
+              iconColor="slate"
+            />
+            <MetricCard
+              title="Total Submissions"
+              value={staffTotalSubmissions}
+              trend={{ direction: 'up', value: 'Class responses' }}
+              icon={<Layers className="w-5 h-5" />}
+              iconColor="blue"
+            />
+            <MetricCard
+              title="Awaiting Grading"
+              value={staffAwaiting}
+              trend={{ direction: staffAwaiting > 0 ? 'down' : 'up', value: staffAwaiting > 0 ? 'Queue pending' : 'Zero backlog' }}
+              icon={<Clock className="w-5 h-5" />}
+              iconColor="amber"
+            />
+            <MetricCard
+              title="Evaluated"
+              value={staffGraded}
+              trend={{ direction: 'up', value: 'Marks recorded' }}
+              icon={<CheckCircle className="w-5 h-5" />}
+              iconColor="emerald"
+            />
+          </>
+        )}
+      </div>
+
       {/* Header */}
-      <div className="bg-white rounded-2xl border border-slate-200 p-6 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+      <div className="bg-white rounded-xl border border-slate-200/80 p-5 sm:p-6 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
         <div>
-          <h2 className="font-heading text-xl font-bold text-slate-900 flex items-center gap-2">
+          <h2 className="font-heading text-lg sm:text-xl font-bold text-slate-900 flex items-center gap-2">
             <BookOpen className="w-5 h-5 text-blue-700" />
-            <span>Homework, Assignments & Submission Portal</span>
+            <span>Coursework & Assignment Manager</span>
           </h2>
           <p className="text-xs sm:text-sm text-slate-500 mt-0.5">
             {isStaff
-              ? 'Publish coursework, review uploaded student work, and record grades & remarks.'
-              : 'Track due dates, download reference materials, upload solutions, and view teacher feedback.'}
+              ? 'Publish syllabus tasks, review uploaded submissions, and issue marks & remarks.'
+              : 'Track deadlines, review instructor notes, submit solutions, and inspect grades.'}
           </p>
         </div>
 
         {isStaff && (
-          <button
+          <Button
             onClick={() => setCreateOpen(true)}
-            className="px-4 py-2 rounded-xl bg-blue-700 hover:bg-blue-800 text-white text-xs font-semibold flex items-center gap-1.5 shadow-2xs cursor-pointer"
+            variant="primary"
+            size="sm"
           >
-            <Plus className="w-4 h-4" />
+            <Plus className="w-4 h-4 mr-1.5" />
             <span>Create New Assignment</span>
-          </button>
+          </Button>
         )}
       </div>
 
       {/* Filters */}
-      <div className="bg-white rounded-2xl border border-slate-200 p-4 flex flex-wrap items-center justify-between gap-3">
-        <div className="flex flex-wrap items-center gap-2">
+      <div className="bg-white rounded-xl border border-slate-200/80 p-3 sm:p-4 flex flex-wrap items-center justify-between gap-3">
+        <div className="flex flex-wrap items-center gap-1.5">
           <button
             onClick={() => setSubjectFilter('all')}
-            className={`px-3 py-1.5 rounded-xl text-xs font-semibold ${
-              subjectFilter === 'all' ? 'bg-slate-900 text-white' : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
+            className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition-all cursor-pointer ${
+              subjectFilter === 'all' ? 'bg-slate-900 text-white shadow-2xs' : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
             }`}
           >
             All Subjects
@@ -222,9 +308,9 @@ export function AssignmentsPage() {
             <button
               key={s.id}
               onClick={() => setSubjectFilter(String(s.id))}
-              className={`px-3 py-1.5 rounded-xl text-xs font-semibold ${
+              className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition-all cursor-pointer ${
                 subjectFilter === String(s.id)
-                  ? 'bg-blue-700 text-white'
+                  ? 'bg-blue-700 text-white shadow-2xs'
                   : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
               }`}
             >
@@ -237,7 +323,7 @@ export function AssignmentsPage() {
           <select
             value={statusFilter}
             onChange={e => setStatusFilter(e.target.value)}
-            className="px-3 py-1.5 rounded-xl border border-slate-200 text-xs font-semibold bg-white"
+            className="px-3 py-1.5 rounded-lg border border-slate-200 text-xs font-semibold bg-white text-slate-700 focus:outline-none focus:ring-2 focus:ring-blue-600"
           >
             <option value="all">All Statuses</option>
             <option value="assigned">Assigned</option>
@@ -251,17 +337,19 @@ export function AssignmentsPage() {
       </div>
 
       {/* Assignments Cards */}
-      <div className="space-y-4">
+      <div className="space-y-3.5">
         {assignmentsList.map((asg: any) => {
           const sub = asg.submission;
+          const statusInfo = sub ? STATUS_VARIANTS[sub.status] || { variant: 'outline' as const, label: sub.status } : null;
+
           return (
-            <div key={asg.id} className="bg-white rounded-2xl border border-slate-200 p-6 shadow-2xs">
-              <div className="flex flex-wrap items-center justify-between gap-2 mb-2">
+            <div key={asg.id} className="bg-white rounded-xl border border-slate-200/80 hover:border-slate-300 transition-all p-5 sm:p-6 shadow-2xs">
+              <div className="flex flex-wrap items-center justify-between gap-2 mb-2.5">
                 <div className="flex items-center gap-2">
-                  <span className="px-2.5 py-0.5 rounded-md bg-blue-50 text-blue-700 font-mono text-xs font-bold">
+                  <span className="px-2.5 py-0.5 rounded-md bg-blue-50 text-blue-700 border border-blue-200/60 font-mono text-xs font-bold">
                     {asg.subjectCode} • {asg.subjectName}
                   </span>
-                  <span className="text-xs text-slate-500">By {asg.teacherName}</span>
+                  <span className="text-xs text-slate-500 font-medium">Instructor: {asg.teacherName}</span>
                 </div>
 
                 <div className="flex items-center gap-2">
@@ -269,25 +357,21 @@ export function AssignmentsPage() {
                     <Clock className="w-3.5 h-3.5 text-slate-400" />
                     Due: <strong className="text-slate-800">{asg.dueDate}</strong>
                   </span>
-                  <span className="text-xs font-mono px-2 py-0.5 rounded bg-slate-100 text-slate-700 font-semibold">
-                    Max: {asg.maxMarks} pts
+                  <span className="text-xs font-mono px-2 py-0.5 rounded bg-slate-100 text-slate-700 font-semibold border border-slate-200/60">
+                    Max {asg.maxMarks} pts
                   </span>
-                  {!isStaff && sub && (
-                    <span
-                      className={`px-2.5 py-0.5 rounded-full text-xs font-bold uppercase ${
-                        STATUS_BADGES[sub.status] || 'bg-slate-100 text-slate-700'
-                      }`}
-                    >
-                      {sub.status.replace('_', ' ')}
-                    </span>
+                  {!isStaff && statusInfo && (
+                    <Badge variant={statusInfo.variant} size="sm">
+                      {statusInfo.label}
+                    </Badge>
                   )}
                 </div>
               </div>
 
-              <h3 className="font-heading text-lg font-bold text-slate-900">{asg.title}</h3>
-              <p className="text-xs sm:text-sm text-slate-600 mt-1">{asg.description}</p>
+              <h3 className="font-heading text-base sm:text-lg font-bold text-slate-900">{asg.title}</h3>
+              <p className="text-xs sm:text-sm text-slate-600 mt-1 leading-relaxed">{asg.description}</p>
               {asg.instructions && (
-                <div className="mt-3 p-3.5 rounded-xl bg-slate-50 border border-slate-200/70 text-xs text-slate-700 whitespace-pre-line">
+                <div className="mt-3 p-3 rounded-lg bg-slate-50 border border-slate-200/70 text-xs text-slate-700 whitespace-pre-line">
                   <strong className="block text-slate-900 mb-1">Instructions:</strong>
                   {asg.instructions}
                 </div>
@@ -364,13 +448,20 @@ export function AssignmentsPage() {
                         <div>
                           <div className="flex items-center justify-between">
                             <span className="text-xs font-bold text-slate-900">{s.studentName}</span>
-                            <span
-                              className={`px-2 py-0.5 rounded-full text-[10px] font-bold uppercase ${
-                                STATUS_BADGES[s.status] || 'bg-slate-100 text-slate-700'
-                              }`}
+                            <Badge
+                              variant={
+                                s.status === 'graded'
+                                  ? 'success'
+                                  : s.status === 'submitted'
+                                  ? 'info'
+                                  : s.status === 'in_progress'
+                                  ? 'warning'
+                                  : 'outline'
+                              }
+                              size="sm"
                             >
                               {s.status.replace('_', ' ')}
-                            </span>
+                            </Badge>
                           </div>
                           {s.textContent && (
                             <p className="text-xs text-slate-600 mt-1.5 line-clamp-2">{s.textContent}</p>

@@ -36,6 +36,7 @@ import {
 } from 'lucide-react';
 import { useAuth, UserRole } from '../../context/AuthContext';
 import { apiFetch } from '../../lib/api';
+import { CommandPalette } from '../ui/CommandPalette';
 
 interface NavItem {
   label: string;
@@ -224,14 +225,15 @@ export function AppShell({ children }: { children: React.ReactNode }) {
       >
         {/* Brand Header */}
         <div className="h-16 px-4 flex items-center justify-between border-b border-slate-100">
-          <div className="flex items-center gap-3 overflow-hidden">
-            <div className="w-9 h-9 rounded-xl bg-blue-700 flex items-center justify-center text-white shadow-sm shrink-0">
-              <GraduationCap className="w-5 h-5" />
+          <div className="flex items-center gap-2.5 overflow-hidden">
+            <div className="w-8 h-8 rounded-lg bg-slate-900 text-white font-mono font-bold text-xs flex items-center justify-center shadow-xs shrink-0 tracking-tight">
+              MCB
             </div>
             {!collapsed && (
               <div className="truncate">
-                <div className="font-heading font-bold text-sm text-slate-900 tracking-tight truncate">
-                  {schoolSettings?.schoolName || 'Veritas Academy'}
+                <div className="font-heading font-bold text-sm text-slate-900 tracking-tight truncate flex items-center gap-1.5">
+                  <span>MCB Veritas</span>
+                  <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 shrink-0" title="System Operational" />
                 </div>
                 <div className="text-[11px] font-medium text-slate-500 truncate">
                   {roleMeta.title}
@@ -326,10 +328,13 @@ export function AppShell({ children }: { children: React.ReactNode }) {
           <div className="relative w-72 max-w-full bg-white h-full flex flex-col shadow-xl z-10">
             <div className="h-16 px-4 flex items-center justify-between border-b border-slate-100">
               <div className="flex items-center gap-2.5">
-                <div className="w-8 h-8 rounded-lg bg-blue-700 flex items-center justify-center text-white">
-                  <GraduationCap className="w-4 h-4" />
+                <div className="w-8 h-8 rounded-lg bg-slate-900 flex items-center justify-center text-white font-mono font-bold text-xs">
+                  MCB
                 </div>
-                <span className="font-heading font-bold text-sm text-slate-900">Veritas Academy</span>
+                <div>
+                  <span className="font-heading font-bold text-sm text-slate-900 block leading-tight">MCB Veritas</span>
+                  <span className="text-[10px] text-slate-500 font-medium">{roleMeta.title}</span>
+                </div>
               </div>
               <button onClick={() => setMobileMenuOpen(false)} className="p-1.5 text-slate-500 hover:bg-slate-100 rounded-lg">
                 <X className="w-5 h-5" />
@@ -794,87 +799,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
       </div>
 
       {/* Global Search Command Palette Modal */}
-      {searchOpen && (
-        <div className="fixed inset-0 z-50 flex items-start justify-center pt-20 px-4">
-          <div className="fixed inset-0 bg-slate-900/40 backdrop-blur-xs" onClick={() => setSearchOpen(false)} />
-          <div className="relative w-full max-w-2xl bg-white rounded-2xl shadow-2xl border border-slate-200 overflow-hidden z-10">
-            <div className="flex items-center px-4 py-3.5 border-b border-slate-100 gap-3">
-              <Search className="w-5 h-5 text-blue-600 shrink-0" />
-              <input
-                type="search"
-                autoFocus
-                value={searchQuery}
-                onChange={e => setSearchQuery(e.target.value)}
-                placeholder="Search students, teachers, subjects, assignments, announcements, library books..."
-                className="w-full text-sm text-slate-900 placeholder:text-slate-400 focus:outline-none"
-              />
-              <button
-                type="button"
-                onClick={() => setSearchOpen(false)}
-                className="px-2 py-1 text-[11px] font-mono bg-slate-100 text-slate-500 rounded-md"
-              >
-                ESC
-              </button>
-            </div>
-            <div className="max-h-96 overflow-y-auto p-2">
-              {!searchQuery.trim() ? (
-                <div className="p-6 text-center">
-                  <p className="text-xs font-medium text-slate-500 mb-3">Quick Navigation</p>
-                  <div className="flex flex-wrap justify-center gap-2">
-                    {[
-                      { label: 'Attendance', url: '/attendance' },
-                      { label: 'Assignments', url: '/assignments' },
-                      { label: 'Examinations', url: '/examinations' },
-                      { label: 'Timetable', url: '/timetable' },
-                      { label: 'Student Portfolio', url: '/portfolio' },
-                      { label: 'Library Catalogue', url: '/library' },
-                      { label: 'Transport Routes', url: '/transport' },
-                    ].map(q => (
-                      <button
-                        key={q.url}
-                        type="button"
-                        onClick={() => {
-                          setSearchOpen(false);
-                          navigate(q.url);
-                        }}
-                        className="px-3 py-1.5 rounded-xl bg-slate-100 hover:bg-blue-50 hover:text-blue-700 text-xs font-medium text-slate-700 transition-colors"
-                      >
-                        {q.label}
-                      </button>
-                    ))}
-                  </div>
-                </div>
-              ) : searchResults.length === 0 ? (
-                <div className="py-12 text-center text-sm text-slate-400">
-                  No matching records found for "{searchQuery}".
-                </div>
-              ) : (
-                <div className="space-y-1">
-                  {searchResults.map(item => (
-                    <button
-                      key={item.id}
-                      type="button"
-                      onClick={() => {
-                        setSearchOpen(false);
-                        navigate(item.url);
-                      }}
-                      className="w-full px-3.5 py-2.5 rounded-xl hover:bg-slate-100 flex items-center justify-between text-left transition-colors"
-                    >
-                      <div>
-                        <div className="text-sm font-semibold text-slate-900">{item.title}</div>
-                        <div className="text-xs text-slate-500">{item.subtitle}</div>
-                      </div>
-                      <span className="px-2.5 py-1 rounded-full text-[11px] font-semibold bg-blue-50 text-blue-700">
-                        {item.category}
-                      </span>
-                    </button>
-                  ))}
-                </div>
-              )}
-            </div>
-          </div>
-        </div>
-      )}
+      <CommandPalette isOpen={searchOpen} onClose={() => setSearchOpen(false)} />
 
       {/* Toast Notification Stack */}
       <div className="fixed bottom-4 right-4 z-50 flex flex-col gap-2 max-w-sm w-full pointer-events-none no-print">

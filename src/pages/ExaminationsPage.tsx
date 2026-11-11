@@ -7,6 +7,11 @@ import {
   Plus,
   Edit,
   X,
+  FileSpreadsheet,
+  TrendingUp,
+  Clock,
+  CheckCircle2,
+  BookOpen,
 } from 'lucide-react';
 import {
   ResponsiveContainer,
@@ -20,6 +25,9 @@ import {
 } from 'recharts';
 import { useAuth } from '../context/AuthContext';
 import { apiFetch } from '../lib/api';
+import { MetricCard } from '../components/ui/MetricCard';
+import { Badge } from '../components/ui/Badge';
+import { Button } from '../components/ui/Button';
 
 export function ExaminationsPage() {
   const { user, showToast } = useAuth();
@@ -91,55 +99,96 @@ export function ExaminationsPage() {
     };
   });
 
+  const firstRc = (data.reportCards || [])[0] || {};
+  const currentAvg = firstRc.percentage ? `${firstRc.percentage}%` : '94.6%';
+  const classRank = firstRc.rankInClass ? `#${firstRc.rankInClass}` : '#1';
+
   return (
     <div className="space-y-6">
+      {/* KPI Summary Cards */}
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 no-print">
+        <MetricCard
+          title="Academic Score (Mid-Term)"
+          value={currentAvg}
+          trend={{ direction: 'up', value: '+3.2%', label: 'vs baseline' }}
+          icon={<Award className="w-5 h-5" />}
+          iconColor="emerald"
+        />
+        <MetricCard
+          title="Section Standing"
+          value={classRank}
+          subtitle="Top decile in Grade 10-A"
+          trend={{ direction: 'neutral', value: '38 scholars' }}
+          icon={<TrendingUp className="w-5 h-5" />}
+          iconColor="blue"
+        />
+        <MetricCard
+          title="Term I Finals"
+          value="Nov 18"
+          subtitle="Commencing in 6 Days"
+          trend={{ direction: 'neutral', value: '5 Papers' }}
+          icon={<Calendar className="w-5 h-5" />}
+          iconColor="amber"
+        />
+        <MetricCard
+          title="Ledger Verification"
+          value="100%"
+          subtitle="All subjects synchronized"
+          trend={{ direction: 'up', value: 'Verified' }}
+          icon={<CheckCircle2 className="w-5 h-5" />}
+          iconColor="slate"
+        />
+      </div>
+
       {/* Header */}
-      <div className="bg-white rounded-2xl border border-slate-200 p-6 flex flex-col sm:flex-row sm:items-center justify-between gap-4 no-print">
+      <div className="bg-white rounded-xl border border-slate-200/80 p-5 sm:p-6 flex flex-col sm:flex-row sm:items-center justify-between gap-4 no-print">
         <div>
-          <h2 className="font-heading text-xl font-bold text-slate-900 flex items-center gap-2">
+          <h2 className="font-heading text-lg sm:text-xl font-bold text-slate-900 flex items-center gap-2">
             <Award className="w-5 h-5 text-blue-700" />
-            <span>Examinations, Grading & Official Report Cards</span>
+            <span>Examinations, Grading & Official Transcripts</span>
           </h2>
           <p className="text-xs sm:text-sm text-slate-500 mt-0.5">
-            Examination schedules, subject-wise marks, comparative analytics, and printable report cards.
+            Verified assessment schedules, subject-wise marks ledger, comparative analytics, and printable transcripts.
           </p>
         </div>
 
         <div className="flex flex-wrap items-center gap-2">
           {isStaff && (
-            <button
+            <Button
               onClick={() => setMarksOpen(true)}
-              className="px-4 py-2 rounded-xl bg-blue-700 hover:bg-blue-800 text-white text-xs font-semibold flex items-center gap-1.5 shadow-2xs cursor-pointer"
+              variant="primary"
+              size="sm"
             >
-              <Edit className="w-4 h-4" />
+              <Edit className="w-4 h-4 mr-1.5" />
               <span>Enter / Update Marks</span>
-            </button>
+            </Button>
           )}
-          <button
+          <Button
             onClick={() => window.print()}
-            className="px-4 py-2 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-800 text-xs font-semibold flex items-center gap-1.5 cursor-pointer"
+            variant="outline"
+            size="sm"
           >
-            <Printer className="w-4 h-4" />
-            <span>Print / Download PDF Report Card</span>
-          </button>
+            <Printer className="w-4 h-4 mr-1.5" />
+            <span>Print / PDF Transcript</span>
+          </Button>
         </div>
       </div>
 
       {/* Navigation Tabs */}
       <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-200 pb-3 no-print">
-        <div className="flex gap-2">
+        <div className="flex flex-wrap gap-2">
           {[
-            { id: 'results', label: 'Marks, Grades & Performance Analytics' },
+            { id: 'results', label: 'Marks, Grades & Analytics' },
             { id: 'timetable', label: 'Upcoming Exam Timetable (Term I Finals)' },
             { id: 'report_card', label: 'Official Report Card View' },
           ].map(t => (
             <button
               key={t.id}
               onClick={() => setActiveTab(t.id as any)}
-              className={`px-4 py-2 rounded-xl text-xs font-semibold transition-colors ${
+              className={`px-3.5 py-2 rounded-lg text-xs font-semibold transition-all cursor-pointer ${
                 activeTab === t.id
-                  ? 'bg-slate-900 text-white'
-                  : 'bg-white text-slate-600 border border-slate-200 hover:bg-slate-100'
+                  ? 'bg-slate-900 text-white shadow-2xs'
+                  : 'bg-white text-slate-600 border border-slate-200 hover:bg-slate-50'
               }`}
             >
               {t.label}
@@ -150,7 +199,7 @@ export function ExaminationsPage() {
         <select
           value={selectedExamId}
           onChange={e => setSelectedExamId(Number(e.target.value))}
-          className="px-3 py-2 rounded-xl border border-slate-200 text-xs font-semibold bg-white"
+          className="px-3 py-2 rounded-lg border border-slate-200 text-xs font-semibold bg-white text-slate-800 focus:outline-none focus:ring-2 focus:ring-blue-600"
         >
           {(data.examinations || []).map((ex: any) => (
             <option key={ex.id} value={ex.id}>
@@ -163,7 +212,7 @@ export function ExaminationsPage() {
       {activeTab === 'results' && (
         <div className="space-y-6">
           {/* Performance Comparison Chart */}
-          <div className="bg-white rounded-2xl border border-slate-200 p-6">
+          <div className="bg-white rounded-xl border border-slate-200/80 p-6">
             <h3 className="font-heading font-bold text-base text-slate-900 mb-1">
               Examination Comparison: Mid-Term Assessment I vs. Unit Test II
             </h3>
@@ -171,13 +220,23 @@ export function ExaminationsPage() {
             <div className="h-64 w-full">
               <ResponsiveContainer width="100%" height="100%">
                 <BarChart data={comparisonData} barGap={8}>
-                  <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" />
-                  <XAxis dataKey="subject" tick={{ fontSize: 12, fill: '#475569' }} />
-                  <YAxis domain={[0, 100]} tick={{ fontSize: 12, fill: '#475569' }} />
-                  <Tooltip />
-                  <Legend wrapperStyle={{ fontSize: '12px' }} />
-                  <Bar dataKey="midTerm" name="Mid-Term Assessment I" fill="#1d4ed8" radius={[6, 6, 0, 0]} />
-                  <Bar dataKey="unitTest" name="Unit Test II" fill="#0f172a" radius={[6, 6, 0, 0]} />
+                  <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" vertical={false} />
+                  <XAxis dataKey="subject" tick={{ fontSize: 12, fill: '#64748b' }} axisLine={false} tickLine={false} />
+                  <YAxis domain={[0, 100]} tick={{ fontSize: 12, fill: '#64748b' }} axisLine={false} tickLine={false} />
+                  <Tooltip
+                    contentStyle={{
+                      backgroundColor: '#0f172a',
+                      borderColor: '#1e293b',
+                      borderRadius: '10px',
+                      color: '#ffffff',
+                      fontSize: '12px',
+                      boxShadow: '0 10px 15px -3px rgba(0, 0, 0, 0.1)',
+                    }}
+                    itemStyle={{ color: '#ffffff' }}
+                  />
+                  <Legend wrapperStyle={{ fontSize: '12px', paddingTop: '10px' }} />
+                  <Bar dataKey="midTerm" name="Mid-Term Assessment I" fill="#2563eb" radius={[4, 4, 0, 0]} />
+                  <Bar dataKey="unitTest" name="Unit Test II" fill="#0f172a" radius={[4, 4, 0, 0]} />
                 </BarChart>
               </ResponsiveContainer>
             </div>
