@@ -42,7 +42,7 @@ const LOST_FOUND = [{
   location: 'Central Library', dateReported: iso(-1), status: 'reported',
 }];
 
-type Mode = 'two-tools' | 'unknown-tool' | 'identity-arg' | 'duplicate' | 'error' | 'empty';
+type Mode = 'two-tools' | 'unknown-tool' | 'identity-arg' | 'duplicate' | 'error' | 'empty' | 'malformed' | 'chatty' | 'slow';
 let mode: Mode = 'two-tools';
 const providerRequests: Array<Record<string, unknown>> = [];
 
@@ -51,12 +51,22 @@ const servers: Server[] = [];
 async function startFakeProvider() {
   const app = express();
   app.use(express.json());
-  app.post('/v1/chat/completions', (request, res) => {
+  app.post('/v1/chat/completions', async (request, res) => {
     const body = request.body as { messages?: Array<{ role: string; content: string }> };
     const messages = body.messages || [];
     providerRequests.push(body as Record<string, unknown>);
     const user = messages.at(-1)?.content || '';
     if (mode === 'error') { res.status(500).json({ error: 'provider down' }); return; }
+    if (mode === 'malformed') { res.json({ choices: [{ message: { content: 'Sure, I will check your attendance and assignments now.' } }] }); return; }
+    if (mode === 'chatty') {
+      res.json({ choices: [{ message: { content: 'Here is the JSON:\n```json\n' + JSON.stringify({ tool_calls: [{ tool: 'get_attendance', args: {} }, { tool: 'get_assignments', args: {} }] }) + '\n```' } }] });
+      return;
+    }
+    if (mode === 'slow') {
+      await new Promise(resolve => setTimeout(resolve, 1500));
+      res.json({ choices: [{ message: { content: JSON.stringify({ tool_calls: [{ tool: 'get_attendance', args: {} }] }) } }] });
+      return;
+    }
     const call = (calls: unknown) => res.json({ choices: [{ message: { content: JSON.stringify({ tool_calls: calls }) } }] });
     if (mode === 'unknown-tool') { call([{ tool: 'get_any_student_marks', args: {} }]); return; }
     if (mode === 'identity-arg') { call([{ tool: 'get_attendance', args: { studentId: 7 } }]); return; }
@@ -234,9 +244,49 @@ test('a failing provider falls back without breaking the reply', async () => {
   assert.equal(answer.action, undefined);
 });
 
-test('an empty selection falls through to the deterministic module path', async () => {
+test('an empty selection answers every module deterministically', async () => {
   mode = 'empty';
   const token = await newSession();
   const answer = await ask(token, 'how is my attendance and what assignments are due this week?');
+  assert.match(answer.text, /% overall/, 'attendance still answered without the model');
+  assert.match(answer.text, /Kinematics Problem Set/, 'assignments still answered without the model');
+  assert.ok((answer.records?.length || 0) >= 2);
+});
+
+test('one module word plus a second ask activates routing', () => {
+  assert.equal(shouldAttemptToolSelection('I’ve been missing some morning classes and also want to know what work I owe this week.'), true);
+  assert.equal(shouldAttemptToolSelection('My attendance is slipping and I also want to know what is coming up.'), true);
+  assert.equal(shouldAttemptToolSelection('what’s my attendance?'), false);
+  assert.equal(shouldAttemptToolSelection('who teaches physics?'), false);
+  assert.equal(shouldAttemptToolSelection('open the timetable'), false);
+});
+
+test('router prose with no JSON is discarded and the reply still arrives', async () => {
+  mode = 'malformed';
+  const token = await newSession();
+  const answer = await ask(token, 'how is my attendance and what assignments are due this week?');
+  assert.ok(answer.text.length > 0);
+  assert.match(answer.text, /% overall/, 'falls back to the deterministic module path');
+});
+
+test('router JSON wrapped in prose and fences still executes', async () => {
+  mode = 'chatty';
+  const token = await newSession();
+  const answer = await ask(token, 'how is my attendance and what assignments are due this week?');
   assert.match(answer.text, /% overall/);
+  assert.match(answer.text, /Kinematics Problem Set/);
+});
+
+test('a slow provider is abandoned at the timeout', async () => {
+  mode = 'slow';
+  process.env.ECHO_TOOL_SELECT_TIMEOUT_MS = '250';
+  try {
+    const token = await newSession();
+    const started = Date.now();
+    const answer = await ask(token, 'how is my attendance and what assignments are due this week?');
+    assert.ok(Date.now() - started < 1200, 'the router call is bounded');
+    assert.ok(answer.text.length > 0);
+  } finally {
+    delete process.env.ECHO_TOOL_SELECT_TIMEOUT_MS;
+  }
 });

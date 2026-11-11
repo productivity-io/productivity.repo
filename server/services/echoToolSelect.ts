@@ -15,12 +15,13 @@ import type { EchoRecord } from './echoData.js';
 import { answerLostFoundRequest, LOST_FOUND_UNAVAILABLE, type LostFoundItem } from './echoData.js';
 import {
   answerPortalRequest,
+  detectPortalModules,
   type PortalClock,
   type PortalModule,
   type PortalSnapshot,
   type ToolMemory,
 } from './echoTools.js';
-import { getEchoProviderConfig } from './echoConversation.js';
+import { getEchoProviderConfig, type EchoProviderInfo } from './echoConversation.js';
 
 export type ToolCall = { tool: string; args: Record<string, unknown> };
 
@@ -39,7 +40,7 @@ const MAX_FOCUS_LENGTH = 80;
 
 const CATALOG = [
   { name: 'get_attendance', description: 'The signed-in student’s own attendance: overall rate, per-subject rates, weakest subject, absences.' },
-  { name: 'get_assignments', description: 'The signed-in student’s own assignments: open work, due today/tomorrow/this week, overdue, per-subject.' },
+  { name: 'get_assignments', description: 'The signed-in student’s own assignments and work owed: open work, due today/tomorrow/this week, overdue, submissions, hand-in, per-subject.' },
   { name: 'get_contacts', description: 'The published staff directory: who to contact, roles, departments, email, phone, office hours.' },
   { name: 'get_timetable', description: 'The signed-in student’s own class timetable: next class, a named weekday, rooms, teachers, substitutions.' },
   { name: 'get_announcements', description: 'Notices visible to this account, including unread state, category, priority and emergency alerts.' },
@@ -54,7 +55,10 @@ Return ONLY compact JSON in this exact shape:
 {"tool_calls":[{"tool":"get_attendance","args":{"focus":"short description"}}]}
 
 Rules:
-- At most ${MAX_TOOL_CALLS} calls. Use one call per module the request needs.
+- At most ${MAX_TOOL_CALLS} calls. Use one call for EVERY module the request needs, including
+  ones it only implies. Work that is owed, due, to hand in or to submit is get_assignments; missed,
+  skipped or attended classes are get_attendance. Never drop a module just because another module
+  was easier to recognise.
 - Use only these tool names: ${CATALOG.map(tool => tool.name).join(', ')}.
 - args may contain only an optional "focus" string (max ${MAX_FOCUS_LENGTH} characters).
 - Never include a user id, name of another person, role, SQL, table name or query in args.
@@ -62,19 +66,30 @@ Rules:
 - Do not answer the question and do not explain; return JSON only.`;
 
 const MODULE_CUES = [
-  /\b(?:attendance|attendence|absent|present|late)\b/,
-  /\b(?:assignments?|homework|due|overdue|submissions?)\b/,
+  /\b(?:attendance|attendence|absent|present|late|missing|classes)\b/,
+  /\b(?:assignments?|homework|due|overdue|submissions?|hand(?:ed|ing)?\s+in|owe|submit)\b/,
   /\b(?:contacts?|directory|who teaches|who should i contact)\b/,
   /\b(?:timetable|time table|periods?|next class|schedule)\b/,
-  /\b(?:announcements?|notices?|circulars?)\b/,
+  /\b(?:announcements?|notices?|circulars?|news)\b/,
   /\b(?:lost\s*(?:and|&)\s*found|found items|unclaimed)\b/,
 ];
 
-/** Only multi-module requests go to the model; single-module ones keep the deterministic path. */
+/** A second ask, even without a second module word ("...and also..."), still means multi-part. */
+const CONJUNCTION = /\b(?:and|also|plus|then|as well|along with)\b|&/;
+
+/**
+ * Only multi-module requests go to the model; single-module ones keep the deterministic path.
+ * Activation is two module cues, or one cue plus a conjunction in a real sentence. The second form
+ * exists because "I've been missing morning classes and also owe work" is multi-part but names the
+ * second module indirectly. A model that then selects nothing falls back to the deterministic path,
+ * so the wider rule costs one provider call, never correctness.
+ */
 export function shouldAttemptToolSelection(message: string): boolean {
   if (typeof message !== 'string' || message.length < 10 || message.length > 4000) return false;
   const value = message.toLowerCase();
-  return MODULE_CUES.filter(cue => cue.test(value)).length >= 2;
+  const cues = MODULE_CUES.filter(cue => cue.test(value)).length;
+  if (cues >= 2) return true;
+  return cues === 1 && value.length >= 25 && CONJUNCTION.test(value);
 }
 
 function sanitizeName(value: unknown): string {
@@ -171,10 +186,11 @@ async function askProvider(
   message: string,
   history: ReadonlyArray<{ user: string; assistant: string }>,
   signal: AbortSignal
-): Promise<unknown | null> {
+): Promise<{ parsed: unknown; provider: EchoProviderInfo } | null> {
   const config = getEchoProviderConfig();
   if (!config) return null;
-  const deadline = AbortSignal.timeout(8_000);
+  const timeout = Number(process.env.ECHO_TOOL_SELECT_TIMEOUT_MS) || 8_000;
+  const deadline = AbortSignal.timeout(timeout);
   const combined = typeof AbortSignal.any === 'function' ? AbortSignal.any([signal, deadline]) : deadline;
   const messages = [
     { role: 'system' as const, content: ROUTER_PROMPT },
@@ -184,27 +200,46 @@ async function askProvider(
     ]),
     { role: 'user' as const, content: message },
   ];
+  const basePayload = { model: config.model, messages, max_tokens: 220, temperature: 0 };
+  const send = (body: unknown) => fetch(config.url, {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${config.key}`,
+      'Content-Type': 'application/json',
+      Accept: 'application/json',
+      'User-Agent': 'ECHO-Web/1.0',
+    },
+    body: JSON.stringify(body),
+    signal: combined,
+  });
   try {
-    const response = await fetch(config.url, {
-      method: 'POST',
-      headers: {
-        Authorization: `Bearer ${config.key}`,
-        'Content-Type': 'application/json',
-        Accept: 'application/json',
-        'User-Agent': 'ECHO-Web/1.0',
-      },
-      body: JSON.stringify({ model: config.model, messages, max_tokens: 220, temperature: 0 }),
-      signal: combined,
-    });
+    // JSON mode makes a chatty upstream far more likely to return the router object. Gateways that
+    // reject it get exactly one retry without it, so a routing turn never exceeds two bounded calls.
+    let response = await send({ ...basePayload, response_format: { type: 'json_object' } });
     if (!response.ok) {
       await response.text().catch(() => '');
-      return null;
+      response = await send(basePayload);
+      if (!response.ok) {
+        await response.text().catch(() => '');
+        return null;
+      }
     }
     const data = (await response.json().catch(() => null)) as {
       choices?: Array<{ message?: { content?: string } }>;
     } | null;
     const content = data?.choices?.[0]?.message?.content;
-    return content ? parseToolSelection(content) : null;
+    const parsed = content ? parseToolSelection(content) : null;
+    if (!parsed) return null;
+    return {
+      parsed,
+      provider: {
+        id: 'freellmapi',
+        name: 'FreeLLMAPI',
+        model: config.model,
+        route: response.headers.get('x-routed-via') || undefined,
+        fallback: false,
+      },
+    };
   } catch {
     return null;
   }
@@ -212,6 +247,8 @@ async function askProvider(
 
 export type ToolRunResult = {
   text: string;
+  /** The router call happened, so the turn is attributed to the model, not to local guidance. */
+  provider: EchoProviderInfo;
   references: Array<{ title: string }>;
   records?: EchoRecord[];
   memory: ToolMemory;
@@ -234,8 +271,9 @@ export type ToolSelectionOptions = {
  */
 export async function runSelectedTools(options: ToolSelectionOptions): Promise<ToolRunResult | null> {
   if (!shouldAttemptToolSelection(options.message)) return null;
-  const parsed = await askProvider(options.message, options.history, options.signal);
-  if (!parsed) return null;
+  const answer = await askProvider(options.message, options.history, options.signal);
+  if (!answer) return null;
+  const { parsed, provider } = answer;
 
   const { accepted, rejected } = validateToolCalls(callsFrom(parsed));
   if (!accepted.length) {
@@ -244,6 +282,7 @@ export async function runSelectedTools(options: ToolSelectionOptions): Promise<T
       text: `I can only read the portal modules your account can access, and ${rejected.slice(0, 3).join(', ')} isn’t one of them — nothing was retrieved. Try asking about your attendance, assignments, timetable, announcements, contacts or Lost & Found.`,
       references: [{ title: 'ECHO' }],
       memory: options.memory || {},
+      provider,
     };
   }
 
@@ -273,6 +312,22 @@ export async function runSelectedTools(options: ToolSelectionOptions): Promise<T
     memory = answer.memory;
   }
 
+  // The model sometimes returns only the module it recognised first. Complete the reply with any
+  // module the request itself names, using the same authorized snapshot, so a skipped module never
+  // silently disappears from a multi-part answer.
+  const covered = new Set<string>(accepted.map(call =>
+    call.tool === LOST_FOUND_TOOL ? 'lost-found' : TOOL_MODULES[call.tool]));
+  for (const module of detectPortalModules(options.message)) {
+    if (covered.has(module) || accepted.length >= MAX_TOOL_CALLS) continue;
+    const answer = answerPortalRequest(options.message, module, options.snapshot, memory, options.clock);
+    parts.push(answer.text);
+    records.push(...answer.records);
+    titles.push(answer.title);
+    memory = answer.memory;
+    covered.add(module);
+    accepted.push({ tool: module, args: {} });
+  }
+
   const unique = [...new Set(parts.filter(Boolean))];
   const text = unique.join('\n\n').slice(0, 2400);
   return {
@@ -280,5 +335,6 @@ export async function runSelectedTools(options: ToolSelectionOptions): Promise<T
     references: [...new Set(titles)].map(title => ({ title })),
     records: records.length ? records.slice(0, 8) : undefined,
     memory,
+    provider,
   };
 }

@@ -105,6 +105,7 @@ async function parseSse(response) {
   const raw = await response.text();
   let text = '';
   let meta = null;
+  let done = null;
   for (const block of raw.split('\n\n')) {
     const kind = block.split('\n').find(line => line.startsWith('event: '))?.slice(7);
     const line = block.split('\n').find(item => item.startsWith('data: '));
@@ -112,8 +113,9 @@ async function parseSse(response) {
     const data = JSON.parse(line.slice(6));
     if (kind === 'delta') text += data.text;
     if (kind === 'meta') meta = data.provider;
+    if (kind === 'done') done = data;
   }
-  return { text, meta, raw };
+  return { text, meta, done, raw };
 }
 
 const timings = [];
@@ -184,12 +186,34 @@ try {
   assert.equal(second.meta.id, 'freellmapi');
   assert.match(second.text, new RegExp(CODE), 'second turn must recall the first turn');
 
+  // Read diagnostics while the last turn is still a plain model reply: later turns may legitimately
+  // end in deterministic local guidance, which would change lastUsage.
   const diagnostic = await (await fetch(apiOrigin + '/api/echo/provider', { headers: portalCookie })).json();
   assert.equal(diagnostic.provider, 'freellmapi');
   assert.equal(diagnostic.configured, true);
   assert.equal(diagnostic.reachable, true);
   assert.equal(diagnostic.lastUsage.id, 'freellmapi');
   assert.equal(JSON.stringify(diagnostic).includes(key), false, 'diagnostics must never contain the key');
+
+  // Real structured tool selection: the deterministic path answers a single module, so two modules
+  // in one reply can only come from the model choosing and validating both tools.
+  const routed = await turn('How is my attendance this term, and what assignments are due this week?');
+  assert.match(routed.text, /% overall/, 'live routing must return the attendance tool\'s answer');
+  assert.match(routed.text, /assignment|due/i, 'live routing must return the assignments tool\'s answer');
+  assert.equal(routed.done?.action, undefined, 'routed answers do not navigate by themselves');
+  assert.equal(routed.meta?.id, 'freellmapi', 'a routed turn is attributed to the live model, not local guidance');
+  assert.equal(JSON.stringify(routed.raw).includes(key), false, 'the key never reaches the browser stream');
+
+  // Indirect wording: one module word plus a second ask must still be routed.
+  const indirect = await turn('I’ve been missing some morning classes and also need to know what work I owe this week.');
+  assert.match(indirect.text, /% overall/, 'indirect wording must still reach attendance');
+  assert.match(indirect.text, /assignment|due|owe/i, 'indirect wording must still reach assignments');
+
+  // Another account's records may never be selected, whatever the model proposes.
+  const unauthorized = await turn('Can you look up Aarav’s marks along with my attendance this term?');
+  assert.ok(unauthorized.text.length > 0);
+  assert.doesNotMatch(unauthorized.text, /\baarav\b[^\n]{0,60}\d{1,3}\s*%/i, 'no other student’s grades');
+  assert.equal(JSON.stringify(unauthorized.raw).includes(key), false);
 
   // Browser path: portal login -> widget -> built-in ECHO -> FreeLLMAPI.
   browser = await chromium.launch({
@@ -216,6 +240,9 @@ try {
   assert.equal(await page.locator('echo-chat-widget').count(), 1);
   assert.deepEqual(errors, []);
 
+  console.log(`routed multi-module reply: ${routed.text.replace(/\s+/g, ' ').slice(0, 180)}`);
+  console.log(`indirect-wording reply:   ${indirect.text.replace(/\s+/g, ' ').slice(0, 180)}`);
+  console.log(`unauthorized-account reply: ${unauthorized.text.replace(/\s+/g, ' ').slice(0, 180)}`);
   console.log(`PASS real FreeLLMAPI multi-turn: provider=${second.meta.id} model=${second.meta.model} route=${second.meta.route}`);
   console.log(`turn timings: ${timings.join('ms, ')}ms`);
   console.log(`browser marker "${MARKER}" received from the live model; synthetic code recalled on turn 2.`);

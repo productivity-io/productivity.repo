@@ -23,11 +23,13 @@ import {
   isLostFoundFollowUp,
   LOST_FOUND_UNAVAILABLE,
   shapeLostFoundItems,
+  type EchoRecord,
   type LostFoundItem,
 } from './echoData.js';
 import {
   answerPortalRequest,
   detectPortalModule,
+  detectPortalModules,
   type PortalSnapshot,
   type ToolMemory,
 } from './echoTools.js';
@@ -524,8 +526,7 @@ export function createEchoServiceRouter(options: EchoRouterOptions = {}): Router
       // Authorized read-only data runs after navigation and before any model call. The answer is
       // composed from the portal's own records, so a list can never be invented, and record text
       // is never sent to a provider.
-      const multiModule = shouldAttemptToolSelection(message);
-      if (!reply && !multiModule) {
+      if (!reply) {
         const memory = readDataMemory(session.sid, now);
         if (isLostFoundDataRequest(message) || (memory && isLostFoundFollowUp(message))) {
           let items: LostFoundItem[] | null = null;
@@ -573,7 +574,13 @@ export function createEchoServiceRouter(options: EchoRouterOptions = {}): Router
           signal: abortController.signal,
         }).catch(() => null);
         if (selected) {
-          reply = { text: selected.text, references: selected.references, records: selected.records };
+          reply = {
+            text: selected.text,
+            references: selected.references,
+            records: selected.records,
+            provider: selected.provider,
+          };
+          rememberProviderUsage(selected.provider);
           rememberToolMemory(session.sid, selected.memory);
         }
       }
@@ -582,24 +589,39 @@ export function createEchoServiceRouter(options: EchoRouterOptions = {}): Router
       // answer out. Anything the host app cannot read is reported instead of guessed.
       if (!reply) {
         const toolMemory = readToolMemory(session.sid, now);
-        const module = detectPortalModule(message, toolMemory?.memory.lastModule);
-        if (module) {
+        const single = detectPortalModule(message, toolMemory?.memory.lastModule);
+        // If selection was attempted and produced nothing, answer every module the request names
+        // rather than dropping to generic guidance. Same guards, same authorized snapshot.
+        const attempted = shouldAttemptToolSelection(message);
+        const modules = attempted ? detectPortalModules(message).slice(0, 3) : single ? [single] : [];
+        if (!modules.length && single) modules.push(single);
+        if (modules.length) {
           let snapshot: PortalSnapshot | null = null;
           try {
             snapshot = options.readPortal ? (options.readPortal(identity) as PortalSnapshot) : null;
           } catch {
             snapshot = null;
           }
-          const answer = answerPortalRequest(message, module, snapshot, toolMemory?.memory, {
-            now,
-            timeZone: process.env.ECHO_PORTAL_TIMEZONE || 'UTC',
-          });
+          const texts: string[] = [];
+          const records: EchoRecord[] = [];
+          const titles: string[] = [];
+          let memory = toolMemory?.memory;
+          for (const module of modules) {
+            const answer = answerPortalRequest(message, module, snapshot, memory, {
+              now,
+              timeZone: process.env.ECHO_PORTAL_TIMEZONE || 'UTC',
+            });
+            texts.push(answer.text);
+            records.push(...answer.records);
+            titles.push(answer.title);
+            memory = answer.memory;
+          }
           reply = {
-            text: answer.text,
-            references: [{ title: answer.title }],
-            records: answer.records.length ? answer.records : undefined,
+            text: [...new Set(texts.filter(Boolean))].join('\n\n').slice(0, 2400),
+            references: [...new Set(titles)].map(title => ({ title })),
+            records: records.length ? records.slice(0, 8) : undefined,
           };
-          rememberToolMemory(session.sid, answer.memory);
+          if (memory) rememberToolMemory(session.sid, memory);
         }
       }
 

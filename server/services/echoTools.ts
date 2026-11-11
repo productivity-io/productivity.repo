@@ -240,6 +240,27 @@ export function detectPortalModule(message: string, lastModule?: PortalModule): 
   return null;
 }
 
+const TOOL_MODULE_CUES: Array<{ module: PortalModule; cue: RegExp }> = [
+  { module: 'announcements', cue: /\b(?:announcements?|notices?|circulars?|news)\b/ },
+  { module: 'timetable', cue: /\b(?:timetable|time table|periods?|next class|schedule)\b/ },
+  { module: 'contacts', cue: /\b(?:contacts?|directory|who teaches|who should i contact)\b/ },
+  { module: 'attendance', cue: /\b(?:attendance|attendence|absent|present|late|missing|classes)\b/ },
+  { module: 'assignments', cue: /\b(?:assignments?|homework|due|overdue|submissions?|hand(?:ed|ing)?\s+in|owe|submit)\b/ },
+];
+
+/**
+ * Every module a multi-part request names, in catalogue order. Used only as the deterministic
+ * fallback when model-assisted selection was attempted and returned nothing, with the same guards
+ * as `detectPortalModule`, so navigation and explanation questions never receive record data.
+ */
+export function detectPortalModules(message: string): PortalModule[] {
+  const value = normalize(message);
+  if (!value || value.length > 400) return [];
+  if (NAVIGATION.test(value) || EXPLANATION.test(value)) return [];
+  if (EXPLANATION_LEAD.test(value) && !DATA_CUE.test(value)) return [];
+  return TOOL_MODULE_CUES.filter(entry => entry.cue.test(value)).map(entry => entry.module);
+}
+
 const pct = (part: number, total: number) => (total ? Math.round((part / total) * 100) : 0);
 
 function groupAttendance(rows: readonly AttendanceRow[]) {
