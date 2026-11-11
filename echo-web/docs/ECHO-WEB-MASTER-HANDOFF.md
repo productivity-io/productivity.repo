@@ -6,10 +6,11 @@ security gates and offline fallback are preserved; optional free browser speech
 is implemented. Phase 1 (conversational follow-up navigation), Phase 4 (Lost &
 Found), Phase 5 (attendance, assignments, contacts), Phase 6 (timetable,
 announcements) and Phase 7 (model-assisted tool routing) are complete and
-verified end to end. FreeLLMAPI was re-verified live on 2026-11-11. The model
-chooses which read-only tools answer a multi-module question, but every answer is
-still composed server-side from the authorized snapshot: no record text reaches
-the provider.
+verified end to end.FreeLLMAPI was re-verified
+live on 2026-11-11, including real structured tool selection by the live model.
+The model chooses which read-only tools answer a multi-module question, but every
+answer is still composed server-side from the authorized snapshot: no record text
+reaches the provider.
 
 ## Phase 1 - conversational follow-up navigation (2026-11-09)
 
@@ -275,9 +276,58 @@ Server-side guarantees, each covered by a test:
 Browser evidence (`tests/echo-tools-browser.mjs`, `npm run test:echo:tools-browser`):
 real login, real widget, real server and real session against a **stubbed router
 model** — one multi-module question produces both modules' text and at least two
-cards without navigating, and `show Aarav's ...` is refused with no data. This is
-browser coverage of the wiring, not live-model evidence; the live provider run
-covers conversation, not routing.
+cards without navigating, and `show Aarav's ...` is refused with no data.This is browser coverage of the wiring. Live routing is verified separately: see
+"Phase 8" below.
+
+## Phase 8 - live routing evidence and deployment audit (2026-11-11)
+
+`tests/echo-freellm-provider.mjs` now exercises the live model as a router, not
+only as a chat model. It passed twice on 2026-11-11 against FreeLLMAPI with two
+different upstream models (`gemini-robotics-er-2-preview` via `google/...` and
+`qwen3.8-27b` via `groq/...`), covering:
+
+- an explicit multi-module question answered with **both** attendance and
+  assignments (the deterministic path answers one module) with SSE `meta`
+  attributed to `freellmapi`;
+- indirect wording ("missing morning classes ... work I owe") still producing both
+  modules;
+- an unauthorized-account request returning only the signed-in student's own
+  attendance, never another person's marks;
+- no API key anywhere in the stream.
+
+What the live runs exposed, and the changes made because of it:
+
+- the model sometimes answered in prose instead of JSON, so router calls request
+  `response_format: {type:"json_object"}` and retry exactly once without it when a
+  gateway rejects the field;
+- a routed turn was recorded as `local-guidance`, so diagnostics now attribute the
+  turn to the model that actually chose the tools;
+- the model often selected only the module it recognised first, so the reply is
+  completed deterministically with any module the request itself names, from the
+  same authorized snapshot - completion is server-side, never model-trusted;
+- activation now also fires for one module cue plus a conjunction in a real
+  sentence (>= 25 characters), because indirect requests named one module word;
+  if the model then selects nothing, a deterministic multi-module answer is used.
+
+Observed limit: one earlier live run failed because the model replied in prose to
+the indirect request. Provider behaviour is not deterministic, so the fallback -
+not the model - is what guarantees an answer.
+
+### Deployment audit (2026-11-11)
+
+- `vercel.json` and `api/index.ts` exist and build the Express app for Vercel's
+  function runtime.
+- **The backend is not reliable on Vercel as-is.** On serverless the SQLite file
+  is `os.tmpdir()/veritas-data` and uploads are `/tmp/veritas-uploads`: both are
+  ephemeral and per-instance, so users, records and uploads reset on cold start
+  and differ between instances. ECHO sessions live in process memory and are lost
+  on redeploy or another instance. This is a durability problem, not a setting.
+- Production FreeLLMAPI connectivity needs a public HTTPS gateway; a loopback
+  gateway is unreachable from Vercel, and non-loopback HTTP is rejected by design.
+- No deploy was attempted: doing so would require accepting ephemeral student data
+  or exposing a private gateway. The correct next step is a durable database
+  (hosted Postgres/Turso), a shared session store, object storage for uploads and
+  a hosted provider endpoint.
 
 ## What changed
 
@@ -344,8 +394,9 @@ Command: `ECHO_USE_DESKTOP_SETTINGS=true node tests/echo-freellm-provider.mjs`.
 
 | Check | Result |
 | --- | --- |
-| 194 unit/integration tests: config, commands, conversation, navigation, Lost & Found, module tools, tool routing, security | PASS |
+| 198 unit/integration tests: config, commands, conversation, navigation, Lost & Found, module tools, tool routing, security | PASS |
 | tool-routing browser regression | PASS (stubbed router model; real server/session/widget) |
+| live model routing (`ECHO_USE_DESKTOP_SETTINGS=true node tests/echo-freellm-provider.mjs`) | PASS twice on 2026-11-11 (two upstream models) |
 | `tsc --noEmit` | PASS |
 | production `vite build` | PASS |
 | full browser regression | PASS |
@@ -394,21 +445,27 @@ PORTAL_BOOTSTRAP_PASSWORD=<16+ char production bootstrap secret>
   or running on Vercel; seeds the principal's password; sample accounts get random
   unusable hashes.
 - Legacy `FREELMAPI_*` and `ECHO_MODEL_*` aliases still work.
-- `ECHO_PORTAL_TIMEZONE` decides "today"/"next class". It defaults to `UTC`.
-  The school record's address is in California, so the recommended production
-  value is `America/Los_Angeles`; **`Asia/Kolkata` was not applied** because
-  nothing in the portal data supports it. Set it per deployment only if the
-  school's actual timezone changes.
+- `ECHO_PORTAL_TIMEZONE` decides "today", "next class" and "due today". The
+  application stores no time-zone setting in its schema or school settings, so
+  there is no authoritative application value to read; the only authoritative
+  signal is the school record's California address. `.env.example` therefore sets
+  `America/Los_Angeles`. The default stays `UTC` for safety, and **`Asia/Kolkata`
+  was not applied**: it would come from the developer's location, not the school's
+  configuration. Override per deployment only with school confirmation.
 - `/api/echo/provider` reports configured/reachable/model/base host; it never
   exposes the key.
 
 ## Vercel status and required action
 
-The deployed site still runs the old build. A model-only prompt received the old
-scripted welcome, so production is not provider-connected. Vercel cannot reach
-this PC's loopback gateway at `127.0.0.1:31415`.
+**No deployment was made in this phase.** The workspace has no `.vercel` project
+link and no Vercel CLI, so no production SHA exists to verify. `vercel.json`
+(Vite build, `dist`, `api/index.ts`, `maxDuration: 30`) and `api/index.ts` are
+present, so the app can be packaged for Vercel - but the current backend is not
+reliable on serverless (see the deployment audit in Phase 8): SQLite lives in
+`os.tmpdir()/veritas-data`, uploads in `/tmp/veritas-uploads`, and ECHO sessions
+in process memory, all of which are ephemeral per instance.
 
-To enable FreeLLMAPI in production:
+To run FreeLLMAPI in production (after the durability work below):
 
 1. Expose the gateway at a public HTTPS origin (an HTTPS tunnel or a hosted
    FreeLLMAPI-compatible gateway).
@@ -504,24 +561,25 @@ wake word). Phase 4 Lost & Found: `708fe80`
 module tools: `4a99067` (feat(echo): generalize authorized read-only tools across
 modules). Phase 6 timetable and announcements: `ad0e592`
 (feat(echo): read timetable and announcements with zone-aware dates). Phase 7
-tool routing: `664fd44` (feat(echo): route multi-module questions through
-allowlisted tools). Documentation commits sit on top; use `git log --oneline` for
+tool routing: `664fd44`; Phase 8 live routing, fallback completion and provider
+attribution: `67a0e81`. Documentation commits sit on top; use `git log --oneline` for
 the exact current HEAD.
 
-`npm run test:echo`: **194/194 PASS**.
+`npm run test:echo`: **198/198 PASS**.
 `tsc --noEmit`: PASS.
 `npm run build`: PASS (2045 modules).
 `npm run test:echo:browser`: PASS, including the real built-in engine run.
 
-Vercel did not auto-deploy the push. The workspace has no `.vercel` project link
-or deploy hook. Manual Vercel publish or Git-integration reconnect is required.
-After deploying, set environment variables (`SESSION_SECRET`, `ECHO_SESSION_SECRET`,
-`PORTAL_BOOTSTRAP_PASSWORD`, `FREELLMAPI_BASE_URL`, `FREELLMAPI_API_KEY`,
-`FREELLMAPI_MODEL`, `ECHO_ALLOW_PAID_PROVIDER`) in Vercel Project Settings ->
-Environment Variables and redeploy. Do not use `VITE_*` variables. After deploy,
-verify `/api/echo/provider` reports `configured: true` and `reachable: true`,
-and confirm a model-only prompt returns provider metadata. HTTP 200 or Ready
-status alone is not provider proof. Do not force-push.
+No deployment exists to compare against: the workspace has no `.vercel` project
+link, no deploy hook and no Vercel CLI. Once durability work is done, set
+`SESSION_SECRET`, `ECHO_SESSION_SECRET`, `PORTAL_BOOTSTRAP_PASSWORD`,
+`FREELLMAPI_BASE_URL`, `FREELLMAPI_API_KEY`, `FREELLMAPI_MODEL`,
+`ECHO_PORTAL_TIMEZONE=America/Los_Angeles` and `ECHO_ALLOW_PAID_PROVIDER` in Vercel
+Project Settings -> Environment Variables, deploy, then verify
+`/api/echo/provider` reports `configured: true` and `reachable: true` and that a
+routed multi-module prompt answers with both modules on the deployed origin.
+HTTP 200 or Ready status alone is not provider proof. Do not use `VITE_*`
+variables and do not force-push.
 
 ## Remaining priorities (not implemented)
 
@@ -530,11 +588,12 @@ status alone is not provider proof. Do not force-push.
    sent to a provider today; answers would be composed server-side). Staff rows
    stay out until per-record scoping is designed, because a teacher's view spans
    every student.
-2. **Live-model routing evidence.** Phase 7 is verified with a stubbed router and
-   with unit/integration tests; the real FreeLLMAPI run proves conversation, not
-   tool selection. Re-run `ECHO_USE_DESKTOP_SETTINGS=true node
-   tests/echo-freellm-provider.mjs` after adding a multi-module prompt to it if
-   live routing proof is needed. Do not infer routing accuracy from a stub.
+2. **Production hosting durability.** The serverless backend stores SQLite and
+   uploads in ephemeral `/tmp` and keeps ECHO sessions in process memory, and the
+   FreeLLMAPI gateway is loopback-only. Production needs a durable hosted database,
+   a shared session store, object storage for uploads and a public HTTPS provider
+   endpoint before a deploy can be called reliable. No deployment was made; no
+   production SHA exists to verify.
 3. **Charts.** No chart is rendered. Cards and text only; `recharts` is available
    and attendance/assignment data is now structured enough to chart once there is
    a validated schema.
@@ -580,7 +639,7 @@ invent one. Real microphone and real-device audio verification still needs
 hardware this environment lacks.
 
 Do not recreate completed features, weaken tests or enable a paid provider.
-After any change, rerun `npm run test:echo` (194 tests), `npx tsc --noEmit`,
+After any change, rerun `npm run test:echo` (198 tests), `npx tsc --noEmit`,
 `npm run build` and `npm run test:echo:browser`; the opt-in provider test needs
 the FreeLLMAPI desktop gateway. Keep the Markdown/PDF handoffs and
 `F:\ECHO-Handoff` copies current. Verify the deployed site after pushing; do not
