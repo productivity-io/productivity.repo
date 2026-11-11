@@ -19,7 +19,8 @@
     "test:echo:tools-browser": "node tests/echo-tools-browser.mjs",
     "test:echo:provider": "node tests/echo-freellm-provider.mjs",
     "test:upload-access": "node tests/upload-access.mjs",
-    "test:integration": "tsc --noEmit && npm run test:echo && npm run test:upload-access && npm run build && npm run test:echo:browser && node tests/echo-tools-browser.mjs"
+    "typecheck": "node scripts/typecheck.mjs",
+    "test:integration": "npm run typecheck && npm run test:echo && npm run test:upload-access && npm run build && npm run test:echo:browser && node tests/echo-tools-browser.mjs"
   },
   "dependencies": {
     "@hookform/resolvers": "^5.0.1",
