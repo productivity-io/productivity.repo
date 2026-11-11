@@ -9,7 +9,7 @@
 
 ## A. Executive summary
 
-This report documents everything implemented in the ECHO/Veritas project from its inception through the 2026-11-08 release, plus the 2026-11-09 and 2026-11-11 follow-up work: verified conversational navigation, compact/expanded/full-screen workspace modes, optional browser voice input with a foreground "Echo" wake word, and authorized read-only retrieval across Lost & Found, attendance, assignments, contacts, timetable and announcements with grounded answers and record cards, plus model-assisted routing of multi-module questions through an allowlisted, server-validated tool layer. The core ECHO engine (fuzzy commands, navigation, conversation, two-way speech, Stop/reset/copy) is working and tested; voice input is verified against a simulated recognizer, not a real microphone. Security hardening is complete: CORS origin allowlisting replaced reflected `origin: true`, `SESSION_SECRET` is enforced (≥32 chars in production), `PORTAL_BOOTSTRAP_PASSWORD` gates production bootstrap, demo accounts are disabled in production, and password policies differ by environment. All 198 `test:echo` tests pass, TypeScript type-checks cleanly, and the production build succeeds. Live model routing was verified against FreeLLMAPI on 2026-11-11 in two passing runs with different upstream models. FreeLLMAPI remains the primary conversational provider with verified local evidence (292 models, multi-turn conversation, dynamic routing via `auto:reliable`). No paid provider is enabled without explicit opt-in. Production Vercel deployment was not attempted: the workspace has no `.vercel` link or CLI, and the serverless backend keeps SQLite and uploads in ephemeral `/tmp` with sessions in process memory, so it is not reliable there yet (see section H). The master handoff markdown, PDF, and `F:\ECHO-Handoff` copies have been updated.
+This report documents everything implemented in the ECHO/Veritas project from its inception through the 2026-11-08 release, plus the 2026-11-09 and 2026-11-11 follow-up work: verified conversational navigation, compact/expanded/full-screen workspace modes, optional browser voice input with a foreground "Echo" wake word, and authorized read-only retrieval across Lost & Found, attendance, assignments, contacts, timetable and announcements with grounded answers and record cards, plus model-assisted routing of multi-module questions through an allowlisted, server-validated tool layer. The core ECHO engine (fuzzy commands, navigation, conversation, two-way speech, Stop/reset/copy) is working and tested; voice input is verified against a simulated recognizer, not a real microphone. Security hardening is complete: CORS origin allowlisting replaced reflected `origin: true`, `SESSION_SECRET` is enforced (≥32 chars in production), `PORTAL_BOOTSTRAP_PASSWORD` gates production bootstrap, demo accounts are disabled in production, and password policies differ by environment. All 204 `test:echo` tests pass, TypeScript type-checks cleanly, and the production build succeeds. Live model routing was verified against FreeLLMAPI on 2026-11-11 in two passing runs with different upstream models. FreeLLMAPI remains the primary conversational provider with verified local evidence (292 models, multi-turn conversation, dynamic routing via `auto:reliable`). No paid provider is enabled without explicit opt-in. Production Vercel deployment was not attempted: the workspace has no `.vercel` link or CLI, and the serverless backend keeps SQLite and uploads in ephemeral `/tmp` with sessions in process memory, so it is not reliable there yet (see section H). The master handoff markdown, PDF, and `F:\ECHO-Handoff` copies have been updated.
 
 ---
 
@@ -274,6 +274,18 @@ bc65f85 Merge ECHO chat integration into productivity portal
 
 ---
 
+## H2. Durable staging foundation (2026-11-11)
+
+- **ECHO state is durable.** Conversation history and working memory live behind `EchoStateStore`; tests use the in-memory implementation and the server injects the SQLite one. Every read and write is bound to the authenticated `sub`, so one account cannot read another's rows.
+- **Uploads are private.** The public `/uploads` static mount is replaced by an authenticated route that allows only the uploader, staff, or a file already linked from an announcement, assignment or submission. An `uploads` table records ownership so the rule survives restarts.
+- **Durable paths:** `VERITAS_DB_PATH` pins the database file; `VERITAS_REQUIRE_DURABLE=1` makes a serverless start fail fast when it is unset.
+- **Backups:** `npm run db:backup` writes a `VACUUM INTO` copy and verifies `integrity_check`.
+- **Evidence:** 204/204 unit tests (6 persistence), the upload access run, and a real process-shutdown proof that ECHO history remains on disk.
+- **Zero-fee options:** a free VM with a block volume keeps the synchronous SQLite layer unchanged and is recommended under the no-fee constraint; Turso or Neon free tiers need an async data-layer conversion first. A paid host with a persistent disk is simpler but recurring.
+- **Blocked:** no hosted database or volume was provisioned, uploads are durable only where the operator mounts storage, the provider gateway is still laptop-dependent, and no deployment exists, so there is no production SHA.
+
+---
+
 ## I. Remaining work (prioritized)
 
 | Priority | Item | Description |
@@ -358,7 +370,9 @@ take me there") produced only more prose. Two independent causes:
 
 ### Verification
 
-- `npm run test:echo`: 198/198 pass, including 14 navigation lifecycle tests, 12 Lost & Found tests, 23 module-tool tests and 13 tool-routing tests
+- `npm run test:echo`: 204/204 pass, including 14 navigation lifecycle tests, 12 Lost & Found tests, 23 module-tool tests, 13 tool-routing tests and 6 persistence tests
+- `npm run test:upload-access`: pass (anonymous 401, other student 403, owner 200, staff 200, traversal refused, restart persistence)
+- `npm run db:backup`: pass with `integrity_check: ok`
 - `ECHO_USE_DESKTOP_SETTINGS=true node tests/echo-freellm-provider.mjs`: pass twice on 2026-11-11 (live structured routing, indirect wording, unauthorized account, no key leakage)
 - `npm run test:echo:tools-browser`: pass (stubbed router model, real server/session/widget)
   against the real router (offer/accept, `open it`, `yes please`, `show me`,

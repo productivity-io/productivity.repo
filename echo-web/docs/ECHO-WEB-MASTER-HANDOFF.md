@@ -329,6 +329,92 @@ not the model - is what guarantees an answer.
   (hosted Postgres/Turso), a shared session store, object storage for uploads and
   a hosted provider endpoint.
 
+## Phase 9 - durable staging foundation (2026-11-11)
+
+The deployment path was audited before any storage change, then split into what
+could be verified locally without credentials or student data.
+
+### What changed
+
+- **ECHO conversation state is durable.** History, Lost & Found working memory and
+  cross-module subject memory moved behind `EchoStateStore`
+  (`server/services/echoStateStore.ts`). Tests use the in-memory implementation;
+  the server injects the SQLite one (`echoRuntimeStore.ts`). Every read and write
+  is keyed by the authenticated `sub`, so a leaked sid cannot read another
+  account's rows. Navigation offers and rate limits stay in memory on purpose:
+  they are short-lived safeguards, not records.
+- **Uploads are private.** The public `express.static('/uploads')` mount is gone.
+  `/uploads/:folder/:name` requires a session and allows only the uploader, staff,
+  or a file the portal already links from an announcement, assignment or
+  submission (`uploadAccess.ts`, `uploadGuard.ts`). An `uploads` table records the
+  owner so the rule survives restarts; legacy unreferenced files are staff-only.
+- **Durable paths are configurable.** `VERITAS_DB_PATH` pins the database file so
+  a mounted volume works even when the app directory is replaced on deploy;
+  `VERITAS_REQUIRE_DURABLE=1` fails fast on serverless when it is unset.
+- **Backups are a command.** `npm run db:backup` writes a transactionally
+  consistent `VACUUM INTO` copy and verifies `integrity_check`. Run it before any
+  schema change or host migration.
+
+### Evidence
+
+- `npm run test:echo`: **204/204 PASS**, including 6 persistence tests.
+- `npm run test:upload-access`: PASS - anonymous 401, another student 403, owner
+  200, staff 200, legacy file 403, path traversal refused, synthetic files only.
+- The same run proves **restart persistence**: the live server writes ECHO history
+  to `veritas_school.db`, the process is stopped, and a new SQLite connection reads
+  that history back.
+- `npm run db:backup`: PASS with `integrity_check: ok`.
+
+### Architecture options and cost (all zero mandatory fees)
+
+| Option | Durable DB | Uploads | Provider | Trade-off |
+|---|---|---|---|---|
+| Free VM (e.g. Oracle Always Free) + block volume + Caddy | Yes | Local disk | Cloudflare Tunnel | Keeps the synchronous SQLite layer and every test intact; needs server administration and a real backup routine |
+| Vercel + Turso/libSQL free tier + R2 free tier | Yes | Yes | HTTPS gateway | Requires converting `node:sqlite` to async libSQL: a data-layer refactor |
+| Vercel + Neon/Supabase free tier | Yes | Yes | HTTPS gateway | Same async refactor plus Postgres schema and dialect work |
+| Paid Node host with a persistent disk | Yes | Local disk | Cloudflare Tunnel | Simplest operationally, but a recurring fee, so not chosen |
+
+Recommendation under the no-fee constraint: a free VM with a block volume, which
+keeps the existing synchronous SQLite layer and all 204 tests unchanged. Turso or
+Neon become the better serverless answer once the async conversion is approved.
+
+### Provider connectivity
+
+A laptop gateway cannot be a production dependency. Free options are a named
+Cloudflare Tunnel (free; needs a domain you control for a stable hostname) or
+Tailscale Funnel (free; laptop must stay online). Neither is always available, so
+the safe fallback stands: without a reachable HTTPS gateway ECHO answers with
+deterministic portal guidance and never claims a model answered. No credential or
+tunnel is stored in this repository.
+
+### Staging plan (synthetic data only)
+
+1. Provision the durable host and a block volume mounted at `/srv/veritas`.
+2. Set `VERITAS_DATA_DIR=/srv/veritas/data`,
+   `VERITAS_DB_PATH=/srv/veritas/data/veritas_school.db`,
+   `VERITAS_UPLOAD_DIR=/srv/veritas/uploads`, `NODE_ENV=production`.
+3. Set `SESSION_SECRET` (32+ chars), `ECHO_SESSION_SECRET`,
+   `PORTAL_BOOTSTRAP_PASSWORD` (16+ chars), `ECHO_PORTAL_TIMEZONE=America/Los_Angeles`,
+   and keep `ECHO_ALLOW_PAID_PROVIDER=false`.
+4. Seed synthetic demo records with `npm run db:seed`, then run `npm run db:backup`
+   immediately to capture the clean baseline.
+5. Terminate TLS in front of the Node server; serve HTTPS only.
+6. Verify: sign-in per role, two-account isolation, one multi-module ECHO answer,
+   a private upload (owner 200, other student 403), a restart, and a restore from
+   the backup file.
+7. Only then discuss real student data. Do not import production records into an
+   unverified host.
+
+### Still blocked
+
+- No hosted database or volume was provisioned here (no credentials, no paid
+  service), so the only durable store proven is a local SQLite file on a
+  persistent path.
+- Uploads are durable only on storage the operator provides; no object-store
+  driver is implemented yet.
+- `node:sqlite` is synchronous, so hosted Postgres/libSQL needs an async data layer.
+- No deployment was made, so there is still no production SHA to verify.
+
 ## What changed
 
 1. **FreeLLMAPI is the primary brain.** Natural conversation goes to the
@@ -394,7 +480,8 @@ Command: `ECHO_USE_DESKTOP_SETTINGS=true node tests/echo-freellm-provider.mjs`.
 
 | Check | Result |
 | --- | --- |
-| 198 unit/integration tests: config, commands, conversation, navigation, Lost & Found, module tools, tool routing, security | PASS |
+| 204 unit/integration tests: config, commands, conversation, navigation, Lost & Found, module tools, tool routing, persistence, security | PASS |
+| upload access e2e (`npm run test:upload-access`) | PASS (401/403/200/200, traversal refused, restart persistence) |
 | tool-routing browser regression | PASS (stubbed router model; real server/session/widget) |
 | live model routing (`ECHO_USE_DESKTOP_SETTINGS=true node tests/echo-freellm-provider.mjs`) | PASS twice on 2026-11-11 (two upstream models) |
 | `tsc --noEmit` | PASS |
@@ -562,10 +649,11 @@ module tools: `4a99067` (feat(echo): generalize authorized read-only tools acros
 modules). Phase 6 timetable and announcements: `ad0e592`
 (feat(echo): read timetable and announcements with zone-aware dates). Phase 7
 tool routing: `664fd44`; Phase 8 live routing, fallback completion and provider
-attribution: `67a0e81`. Documentation commits sit on top; use `git log --oneline` for
+attribution: `67a0e81`; Phase 9 durable ECHO state, private uploads and backups:
+`c33ee53`. Documentation commits sit on top; use `git log --oneline` for
 the exact current HEAD.
 
-`npm run test:echo`: **198/198 PASS**.
+`npm run test:echo`: **204/204 PASS**.
 `tsc --noEmit`: PASS.
 `npm run build`: PASS (2045 modules).
 `npm run test:echo:browser`: PASS, including the real built-in engine run.
@@ -639,7 +727,7 @@ invent one. Real microphone and real-device audio verification still needs
 hardware this environment lacks.
 
 Do not recreate completed features, weaken tests or enable a paid provider.
-After any change, rerun `npm run test:echo` (198 tests), `npx tsc --noEmit`,
+After any change, rerun `npm run test:echo` (204 tests), `npx tsc --noEmit`,
 `npm run build` and `npm run test:echo:browser`; the opt-in provider test needs
 the FreeLLMAPI desktop gateway. Keep the Markdown/PDF handoffs and
 `F:\ECHO-Handoff` copies current. Verify the deployed site after pushing; do not
