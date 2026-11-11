@@ -15,7 +15,18 @@ if (!fs.existsSync(dataDir)) {
   fs.mkdirSync(dataDir, { recursive: true });
 }
 
-export const dbFilePath = path.join(dataDir, 'veritas_school.db');
+export const dbFilePath = process.env.VERITAS_DB_PATH
+  ? path.resolve(process.env.VERITAS_DB_PATH)
+  : path.join(dataDir, 'veritas_school.db');
+if (!fs.existsSync(path.dirname(dbFilePath))) {
+  fs.mkdirSync(path.dirname(dbFilePath), { recursive: true });
+}
+if (isServerless && !process.env.VERITAS_DB_PATH) {
+  console.warn('[veritas] Serverless runtime without VERITAS_DB_PATH: SQLite writes to os.tmpdir() and is lost on cold start.');
+}
+if (isServerless && process.env.VERITAS_REQUIRE_DURABLE === '1' && !process.env.VERITAS_DB_PATH) {
+  throw new Error('VERITAS_DB_PATH must point at durable storage in this deployment.');
+}
 export const sqlite = new SqliteClientAdapter(dbFilePath);
 try {
   sqlite.pragma('journal_mode = WAL');

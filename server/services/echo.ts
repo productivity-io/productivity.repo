@@ -34,6 +34,11 @@ import {
   type ToolMemory,
 } from './echoTools.js';
 import { runSelectedTools, shouldAttemptToolSelection } from './echoToolSelect.js';
+import {
+  createMemoryEchoStateStore,
+  type EchoHistoryTurn,
+  type EchoStateStore,
+} from './echoStateStore.js';
 
 export type EchoWidgetConfig =
   | { enabled: false }
@@ -143,6 +148,8 @@ export interface EchoRouterOptions {
   readPortal?: (identity: EchoIdentity) => unknown;
   /** Deterministic clock for expiry tests. */
   now?: () => number;
+  /** Durable conversation state. Defaults to process memory (tests, unwired hosts). */
+  store?: EchoStateStore;
 }
 
 /**
@@ -157,68 +164,41 @@ const ECHO_SESSION_SECRET = (() => {
 })();
 const SESSION_TTL_SECONDS = 1800;
 const MAX_SESSIONS = 1000;
-const MAX_REVOKED = 5000;
 const MAX_MESSAGES_PER_MINUTE = 30;
 const ALLOWED_BODY_FIELDS = new Set(['message', 'page']);
 
-const sessionHistory = new Map<string, Array<{ user: string; assistant: string }>>();
-const revokedSessionIds = new Set<string>();
-
 /**
- * Working memory for read-only tool results, bound to one authenticated session. It holds only the
- * sanitized fields (no reporter, contact or claim data) and expires, so "the second one" can be
- * resolved without keeping records around after the conversation ends.
+ * Conversation state lives behind a store so a restarted process - or another instance sharing a
+ * durable database - keeps history and working memory. Tests use the in-memory store; the server
+ * injects a SQLite-backed one.
  */
-type DataMemory = { items: LostFoundItem[]; at: number };
-const DATA_MEMORY_TTL_MS = 30 * 60_000;
-const sessionData = new Map<string, DataMemory>();
+const defaultStore = createMemoryEchoStateStore();
 
-function rememberData(sid: string, items: LostFoundItem[]) {
-  if (!sessionData.has(sid) && sessionData.size >= MAX_SESSIONS) {
-    const oldest = sessionData.keys().next().value;
-    if (oldest !== undefined) sessionData.delete(oldest);
-  }
-  sessionData.set(sid, { items, at: Date.now() });
-}
-
-function readDataMemory(sid: string, now: number): DataMemory | null {
-  const memory = sessionData.get(sid);
-  if (!memory) return null;
-  if (now - memory.at > DATA_MEMORY_TTL_MS) {
-    sessionData.delete(sid);
-    return null;
-  }
-  return memory;
-}
-
-/** Cross-module working memory: the module and subject the conversation is currently about. */
-const sessionTools = new Map<string, { memory: ToolMemory; at: number }>();
-
-function rememberToolMemory(sid: string, memory: ToolMemory) {
-  if (!sessionTools.has(sid) && sessionTools.size >= MAX_SESSIONS) {
-    const oldest = sessionTools.keys().next().value;
-    if (oldest !== undefined) sessionTools.delete(oldest);
-  }
-  sessionTools.set(sid, { memory, at: Date.now() });
-}
-
-function readToolMemory(sid: string, now: number): { memory: ToolMemory; at: number } | null {
-  const stored = sessionTools.get(sid);
-  if (!stored) return null;
-  if (now - stored.at > DATA_MEMORY_TTL_MS) {
-    sessionTools.delete(sid);
-    return null;
-  }
-  return stored;
-}
 const messageTimestamps = new Map<string, number[]>();
 
-function rememberSession(sid: string, history: Array<{ user: string; assistant: string }> = []) {
-  if (!sessionHistory.has(sid) && sessionHistory.size >= MAX_SESSIONS) {
-    const oldest = sessionHistory.keys().next().value;
-    if (oldest !== undefined) sessionHistory.delete(oldest);
-  }
-  sessionHistory.set(sid, history);
+function rememberSession(store: EchoStateStore, sid: string, sub: string, history: EchoHistoryTurn[] = []) {
+  store.ensureSession(sid, sub);
+  store.setHistory(sid, sub, history);
+}
+
+function readHistory(store: EchoStateStore, sid: string, sub: string): EchoHistoryTurn[] {
+  return store.getHistory(sid, sub);
+}
+
+function rememberData(store: EchoStateStore, sid: string, sub: string, items: LostFoundItem[]) {
+  store.setDataMemory(sid, sub, items);
+}
+
+function readDataMemory(store: EchoStateStore, sid: string, sub: string, now: number) {
+  return store.getDataMemory(sid, sub, now);
+}
+
+function rememberToolMemory(store: EchoStateStore, sid: string, sub: string, memory: ToolMemory) {
+  store.setToolMemory(sid, sub, memory);
+}
+
+function readToolMemory(store: EchoStateStore, sid: string, sub: string, now: number) {
+  return store.getToolMemory(sid, sub, now);
 }
 
 /**
@@ -252,15 +232,8 @@ function takePendingNavigation(sid: string, identity: EchoIdentity, now: number)
   return pending;
 }
 
-function revokeSession(sid: string) {
-  if (revokedSessionIds.size >= MAX_REVOKED) {
-    const oldest = revokedSessionIds.values().next().value;
-    if (oldest !== undefined) revokedSessionIds.delete(oldest);
-  }
-  revokedSessionIds.add(sid);
-  sessionHistory.delete(sid);
-  sessionData.delete(sid);
-  sessionTools.delete(sid);
+function revokeSession(store: EchoStateStore, sid: string, sub: string) {
+  store.revoke(sid, sub);
   pendingNavigation.delete(sid);
 }
 
@@ -290,7 +263,7 @@ function createEchoSessionToken(siteId: string, sub: string): { token: string; s
   return { token: `${encoded}.${sig}`, sid };
 }
 
-function verifyEchoSessionToken(token: string, expectedSiteId: string): EchoSessionPayload | null {
+function verifyEchoSessionToken(token: string, expectedSiteId: string, store: EchoStateStore): EchoSessionPayload | null {
   try {
     if (typeof token !== 'string' || token.length > 4096) return null;
     const parts = token.split('.');
@@ -310,7 +283,7 @@ function verifyEchoSessionToken(token: string, expectedSiteId: string): EchoSess
     if (typeof payload.exp !== 'number' || !Number.isFinite(payload.exp) || !Number.isInteger(payload.exp)) return null;
     const now = Date.now();
     if (payload.exp <= now || payload.exp > now + SESSION_TTL_SECONDS * 1000 + 60_000) return null;
-    if (revokedSessionIds.has(payload.sid)) return null;
+    if (store.isRevoked(payload.sid)) return null;
     return payload as EchoSessionPayload;
   } catch {
     return null;
@@ -428,7 +401,8 @@ export function createEchoServiceRouter(options: EchoRouterOptions = {}): Router
     const identity = requireIdentity(req, res);
     if (!identity) return;
     const { token, sid } = createEchoSessionToken(siteId, identity.sub);
-    rememberSession(sid);
+    const store = options.store ?? defaultStore;
+    rememberSession(store, sid, identity.sub);
     res.status(201).json({
       session_token: token,
       expires_in: SESSION_TTL_SECONDS,
@@ -442,12 +416,13 @@ export function createEchoServiceRouter(options: EchoRouterOptions = {}): Router
     if (!identity) return;
     const authHeader = req.headers.authorization || '';
     const token = authHeader.startsWith('Bearer ') ? authHeader.slice(7) : '';
-    const session = verifyEchoSessionToken(token, siteId);
+    const store = options.store ?? defaultStore;
+    const session = verifyEchoSessionToken(token, siteId, store);
     if (!session || session.sub !== identity.sub) {
       res.status(401).json({ error: 'Session expired or invalid.' });
       return;
     }
-    revokeSession(session.sid);
+    revokeSession(store, session.sid, session.sub);
     res.json({});
   });
 
@@ -458,7 +433,8 @@ export function createEchoServiceRouter(options: EchoRouterOptions = {}): Router
     if (!identity) return;
     const authHeader = req.headers.authorization || '';
     const token = authHeader.startsWith('Bearer ') ? authHeader.slice(7) : '';
-    const session = verifyEchoSessionToken(token, siteId);
+    const store = options.store ?? defaultStore;
+    const session = verifyEchoSessionToken(token, siteId, store);
     if (!session || session.sub !== identity.sub) {
       res.status(401).json({ error: 'Session expired or invalid.' });
       return;
@@ -484,7 +460,7 @@ export function createEchoServiceRouter(options: EchoRouterOptions = {}): Router
       return;
     }
 
-    const history = sessionHistory.get(session.sid) || [];
+    const history = readHistory(store, session.sid, session.sub);
     const abortController = new AbortController();
     // IncomingMessage 'close' fires when the request body completes, which would abort the
     // provider call itself. Only an unfinished response means the client actually disconnected.
@@ -527,7 +503,7 @@ export function createEchoServiceRouter(options: EchoRouterOptions = {}): Router
       // composed from the portal's own records, so a list can never be invented, and record text
       // is never sent to a provider.
       if (!reply) {
-        const memory = readDataMemory(session.sid, now);
+        const memory = readDataMemory(store, session.sid, session.sub, now);
         if (isLostFoundDataRequest(message) || (memory && isLostFoundFollowUp(message))) {
           let items: LostFoundItem[] | null = null;
           try {
@@ -541,7 +517,7 @@ export function createEchoServiceRouter(options: EchoRouterOptions = {}): Router
               alreadyExplained: history.some(turn => /lost & found/i.test(turn.assistant)),
             });
             reply = { text: answer.text, references: [{ title: 'Lost & Found' }], records: answer.records };
-            rememberData(session.sid, answer.items);
+            rememberData(store, session.sid, session.sub, answer.items);
           } else {
             reply = { text: LOST_FOUND_UNAVAILABLE, references: [{ title: 'Lost & Found' }] };
           }
@@ -569,7 +545,7 @@ export function createEchoServiceRouter(options: EchoRouterOptions = {}): Router
           history,
           snapshot: selectionSnapshot,
           lostFound: selectionLostFound,
-          memory: readToolMemory(session.sid, now)?.memory,
+          memory: readToolMemory(store, session.sid, session.sub, now)?.memory,
           clock: { now, timeZone: process.env.ECHO_PORTAL_TIMEZONE || 'UTC' },
           signal: abortController.signal,
         }).catch(() => null);
@@ -581,14 +557,14 @@ export function createEchoServiceRouter(options: EchoRouterOptions = {}): Router
             provider: selected.provider,
           };
           rememberProviderUsage(selected.provider);
-          rememberToolMemory(session.sid, selected.memory);
+          rememberToolMemory(store, session.sid, session.sub, selected.memory);
         }
       }
 
       // Deterministic module answers: one module per message, authorized snapshot in, grounded
       // answer out. Anything the host app cannot read is reported instead of guessed.
       if (!reply) {
-        const toolMemory = readToolMemory(session.sid, now);
+        const toolMemory = readToolMemory(store, session.sid, session.sub, now);
         const single = detectPortalModule(message, toolMemory?.memory.lastModule);
         // If selection was attempted and produced nothing, answer every module the request names
         // rather than dropping to generic guidance. Same guards, same authorized snapshot.
@@ -621,7 +597,7 @@ export function createEchoServiceRouter(options: EchoRouterOptions = {}): Router
             references: [...new Set(titles)].map(title => ({ title })),
             records: records.length ? records.slice(0, 8) : undefined,
           };
-          if (memory) rememberToolMemory(session.sid, memory);
+          if (memory) rememberToolMemory(store, session.sid, session.sub, memory);
         }
       }
 
@@ -654,7 +630,7 @@ export function createEchoServiceRouter(options: EchoRouterOptions = {}): Router
         : reply.text;
       history.push({ user: message, assistant: remembered });
       if (history.length > 10) history.splice(0, history.length - 10);
-      rememberSession(session.sid, history);
+      rememberSession(store, session.sid, session.sub, history);
 
       // Provider attribution is explicit so the UI/tests can verify which brain answered.
       if (!res.writableEnded && !res.destroyed) {

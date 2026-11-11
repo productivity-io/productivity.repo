@@ -12,6 +12,8 @@ import { assertSessionSecretConfigured, createSessionToken, verifySessionToken, 
 import { isAllowedPortalOrigin, normalizeHttpOrigin } from './utils/originPolicy.js';
 import { isProductionPortal } from './utils/portalMode.js';
 import { fileStorage } from './services/fileStorage.js';
+import { recordUploadedFile, registerUploadRoutes } from './services/uploadGuard.js';
+import { echoStateStore } from './services/echoRuntimeStore.js';
 import { schoolService } from './services/schoolService.js';
 import { resolvePortalEchoConfig, createEchoServiceRouter, type EchoIdentity } from './services/echo.js';
 import { echoProviderStatus, probeEchoProvider } from './services/echoConversation.js';
@@ -48,8 +50,9 @@ app.use((req: Request, res: Response, next: NextFunction) => {
 app.use(express.json({ limit: '4mb' }));
 app.use(cookieParser());
 
-// Serve uploaded files from active upload directory (./uploads locally, /tmp/veritas-uploads on serverless)
-app.use('/uploads', express.static(fileStorage.getUploadDir()));
+// Uploaded files are private: only the uploader, staff, or a file the portal already links from an
+// announcement/assignment is served. This replaces the previous public static mount.
+registerUploadRoutes(app, requireAuth);
 
 // Initialize & seed database on boot / cold start
 seedDatabase(false);
@@ -121,6 +124,7 @@ app.get('/api/health', (_req: Request, res: Response) => {
 // Self-hosted ECHO v1 chat endpoints. Sessions are bound to the signed-in portal account;
 // the widget never sends model text, record data or provider keys to the browser.
 app.use('/api/echo/v1/sites', createEchoServiceRouter({
+  store: echoStateStore,
   authenticate: (req: Request) => {
     const authHeader = req.headers.authorization;
     // The widget's ECHO bearer token occupies Authorization, so the portal identity comes
@@ -407,6 +411,13 @@ app.post('/api/upload', requireAuth, upload.single('file'), async (req: Request,
     }
     const folder = String(req.body.folder || 'general').replace(/[^a-zA-Z0-9_-]/g, '');
     const saved = await fileStorage.saveFile(req.file.buffer, req.file.originalname, req.file.mimetype, folder);
+    recordUploadedFile({
+      url: saved.url,
+      ownerId: req.currentUser!.id,
+      originalName: req.file.originalname,
+      mimeType: req.file.mimetype,
+      size: saved.size,
+    });
     res.json(saved);
   } catch (err: unknown) {
     const msg = err instanceof Error ? err.message : 'File upload failed';
