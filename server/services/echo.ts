@@ -25,6 +25,12 @@ import {
   shapeLostFoundItems,
   type LostFoundItem,
 } from './echoData.js';
+import {
+  answerPortalRequest,
+  detectPortalModule,
+  type PortalSnapshot,
+  type ToolMemory,
+} from './echoTools.js';
 
 export type EchoWidgetConfig =
   | { enabled: false }
@@ -127,6 +133,11 @@ export interface EchoRouterOptions {
    * the request. Absent, null or throwing is reported to the user instead of inventing records.
    */
   readLostFound?: (identity: EchoIdentity) => unknown;
+  /**
+   * Authorized read-only module snapshot (attendance, assignments, contacts). The host app scopes
+   * it from the authenticated account; a missing module is reported, never guessed.
+   */
+  readPortal?: (identity: EchoIdentity) => unknown;
   /** Deterministic clock for expiry tests. */
   now?: () => number;
 }
@@ -175,6 +186,27 @@ function readDataMemory(sid: string, now: number): DataMemory | null {
     return null;
   }
   return memory;
+}
+
+/** Cross-module working memory: the module and subject the conversation is currently about. */
+const sessionTools = new Map<string, { memory: ToolMemory; at: number }>();
+
+function rememberToolMemory(sid: string, memory: ToolMemory) {
+  if (!sessionTools.has(sid) && sessionTools.size >= MAX_SESSIONS) {
+    const oldest = sessionTools.keys().next().value;
+    if (oldest !== undefined) sessionTools.delete(oldest);
+  }
+  sessionTools.set(sid, { memory, at: Date.now() });
+}
+
+function readToolMemory(sid: string, now: number): { memory: ToolMemory; at: number } | null {
+  const stored = sessionTools.get(sid);
+  if (!stored) return null;
+  if (now - stored.at > DATA_MEMORY_TTL_MS) {
+    sessionTools.delete(sid);
+    return null;
+  }
+  return stored;
 }
 const messageTimestamps = new Map<string, number[]>();
 
@@ -225,6 +257,7 @@ function revokeSession(sid: string) {
   revokedSessionIds.add(sid);
   sessionHistory.delete(sid);
   sessionData.delete(sid);
+  sessionTools.delete(sid);
   pendingNavigation.delete(sid);
 }
 
@@ -509,6 +542,28 @@ export function createEchoServiceRouter(options: EchoRouterOptions = {}): Router
           } else {
             reply = { text: LOST_FOUND_UNAVAILABLE, references: [{ title: 'Lost & Found' }] };
           }
+        }
+      }
+
+      // Module tools use the same contract: authorized snapshot in, grounded answer out. Anything
+      // the host app cannot read for this account is reported instead of guessed.
+      if (!reply) {
+        const toolMemory = readToolMemory(session.sid, now);
+        const module = detectPortalModule(message, toolMemory?.memory.lastModule);
+        if (module) {
+          let snapshot: PortalSnapshot | null = null;
+          try {
+            snapshot = options.readPortal ? (options.readPortal(identity) as PortalSnapshot) : null;
+          } catch {
+            snapshot = null;
+          }
+          const answer = answerPortalRequest(message, module, snapshot, toolMemory?.memory);
+          reply = {
+            text: answer.text,
+            references: [{ title: answer.title }],
+            records: answer.records.length ? answer.records : undefined,
+          };
+          rememberToolMemory(session.sid, answer.memory);
         }
       }
 

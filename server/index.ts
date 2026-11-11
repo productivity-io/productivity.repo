@@ -13,7 +13,7 @@ import { isAllowedPortalOrigin, normalizeHttpOrigin } from './utils/originPolicy
 import { isProductionPortal } from './utils/portalMode.js';
 import { fileStorage } from './services/fileStorage.js';
 import { schoolService } from './services/schoolService.js';
-import { resolvePortalEchoConfig, createEchoServiceRouter } from './services/echo.js';
+import { resolvePortalEchoConfig, createEchoServiceRouter, type EchoIdentity } from './services/echo.js';
 import { echoProviderStatus, probeEchoProvider } from './services/echoConversation.js';
 
 const app = express();
@@ -145,6 +145,48 @@ app.use('/api/echo/v1/sites', createEchoServiceRouter({
   // Read-only and authorized: the same role-visible list the Lost & Found page shows. The
   // service strips reporter, contact and claim fields before anything is displayed.
   readLostFound: () => db.select().from(schema.lostAndFound).all(),
+  // Module snapshot for ECHO's tools. Scoping happens here, from the authenticated account, and
+  // mirrors the existing page APIs: contacts are directory-wide, attendance and assignments are
+  // the signed-in student's own rows only. Staff accounts get contacts and nothing else until
+  // per-record staff scoping is designed.
+  readPortal: (identity: EchoIdentity) => {
+    const userId = Number(identity.sub);
+    if (!Number.isInteger(userId) || userId <= 0) return null;
+    const snapshot: Record<string, unknown> = {
+      contacts: db.select().from(schema.quickContacts).all(),
+    };
+    const student = db.select().from(schema.students).where(eq(schema.students.userId, userId)).get();
+    if (!student) return snapshot;
+
+    const subjects = db.select().from(schema.subjects).all();
+    const teachers = schoolService.getEnrichedTeachers();
+    const today = new Date().toISOString().slice(0, 10);
+    snapshot.attendance = db.select().from(schema.attendance)
+      .where(eq(schema.attendance.studentId, student.id)).all()
+      .map(row => ({
+        ...row,
+        subjectName: row.subjectId
+          ? subjects.find(subject => subject.id === row.subjectId)?.name || ''
+          : 'Daily homeroom',
+      }));
+    const submissions = db.select().from(schema.assignmentSubmissions)
+      .where(eq(schema.assignmentSubmissions.studentId, student.id)).all();
+    snapshot.assignments = db.select().from(schema.assignments).all()
+      .filter(row => row.classId === student.classId && row.sectionId === student.sectionId)
+      .map(row => {
+        const submission = submissions.find(item => item.assignmentId === row.id);
+        return {
+          id: row.id,
+          title: row.title,
+          subjectName: subjects.find(subject => subject.id === row.subjectId)?.name || '',
+          dueDate: row.dueDate,
+          status: submission?.status || (row.dueDate < today ? 'overdue' : 'assigned'),
+          maxMarks: row.maxMarks,
+          teacherName: teachers.find(teacher => teacher.id === row.teacherId)?.fullName || '',
+        };
+      });
+    return snapshot;
+  },
 }));
 
 app.get('/api/echo/config', requireAuth, (_req: Request, res: Response) => {

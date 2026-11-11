@@ -102,6 +102,8 @@ export function isLostFoundDataRequest(message: string): boolean {
   if (!value || value.length > 400) return false;
   if (EXPLANATION.test(value)) return false;
   if (/^(?:open|go to|go back|take me|navigate|bring up|pull up|switch to|head to)\b/.test(value)) return false;
+  // Staff-directory questions belong to the contacts tool, even when they mention a submission.
+  if (/\b(?:who should i contact|whom should i contact|who do i contact|who teaches|contact (?:for|about)|staff directory)\b/.test(value)) return false;
   const moduleRef = MODULE.test(value);
   // A claim question is about records only when it points at the module, an object or a previous
   // item — "how do I claim a leave request" must not become a Lost & Found query.

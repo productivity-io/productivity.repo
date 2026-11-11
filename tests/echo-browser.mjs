@@ -174,7 +174,14 @@ try {
   assert.match(lostFound.meta, /"records"/);
   assert.doesNotMatch(lostFound.meta, /Grade 10-A|VEX Robotics sticker|reporterUserId|contactInfo/);
   assert.match((await builtInMessage(builtC, 'tell me more about the second one')).text, /HydroFlask/);
-  console.log('PASS authorized Lost & Found retrieval, follow-up resolution and field redaction');
+  // Module tools against the same real, seeded database and real portal session.
+  const attendance = await builtInMessage(builtC, 'what’s my attendance percentage?');
+  assert.match(attendance.text, /% overall/);
+  assert.match(attendance.meta, /"records"/);
+  assert.doesNotMatch(attendance.text, /Communication is for requesting/);
+  const followUp = await builtInMessage(builtC, 'which subject has my lowest attendance?');
+  assert.match(followUp.text, /weakest at \d+%/);
+  console.log('PASS authorized Lost & Found retrieval, attendance tool, follow-up resolution and field redaction');
   await fetch(builtIn + '/sessions/current', { method: 'DELETE', headers: { ...portalAuth, Authorization: 'Bearer ' + builtA } });
   assert.equal((await builtInMessage(builtA, 'hello')).status, 401);
   assert.equal((await builtInMessage('invalid', 'hello')).status, 401);
