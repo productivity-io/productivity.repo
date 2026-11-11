@@ -142,6 +142,9 @@ app.use('/api/echo/v1/sites', createEchoServiceRouter({
     }
     return null;
   },
+  // Read-only and authorized: the same role-visible list the Lost & Found page shows. The
+  // service strips reporter, contact and claim fields before anything is displayed.
+  readLostFound: () => db.select().from(schema.lostAndFound).all(),
 }));
 
 app.get('/api/echo/config', requireAuth, (_req: Request, res: Response) => {

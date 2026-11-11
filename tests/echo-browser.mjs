@@ -77,6 +77,13 @@ const echo = createServer(async (req, res) => {
   const action = lower === 'okay take me there'
     ? { type: 'navigate', path: '/attendance', label: 'Attendance', actionId: 'nav:attendance' }
     : null;
+  // Authorized tool results arrive as structured records; the widget must render them as text-only cards.
+  const records = lower === 'what all is actually found'
+    ? [
+        { id: 'lostfound-2', title: 'Navy Blue Veritas Varsity Blazer (Size M)', subtitle: 'Campus Amphitheatre', meta: ['4 Nov 2026', 'apparel'], status: 'unclaimed' },
+        { id: 'lostfound-3', title: 'HydroFlask Water Bottle (Sage Green)', subtitle: '<img src=x onerror="window.__echoXss=1">Computing Suite 104 Corridor', meta: ['2 Nov 2026', 'accessories'], status: 'claim pending review' },
+      ]
+    : null;
   history.push(message);
   res.write(`event: delta\ndata: ${JSON.stringify({ text: reply.slice(0, 6) })}\n\n`);
   let timer;
@@ -84,7 +91,7 @@ const echo = createServer(async (req, res) => {
   timer = setTimeout(() => {
     if (res.destroyed) return;
     res.write(`event: delta\ndata: ${JSON.stringify({ text: reply.slice(6) })}\n\n`);
-    res.end(`event: done\ndata: ${JSON.stringify({ references: [], action })}\n\n`);
+    res.end(`event: done\ndata: ${JSON.stringify({ references: records ? [{ title: 'Lost & Found' }] : [], action, records })}\n\n`);
   }, message === 'slow reply' ? 10000 : 200);
 });
 
@@ -158,6 +165,16 @@ try {
   assert.match(fallbackMeta, /event: meta/);
   assert.match(fallbackMeta, /local-guidance/);
   assert.doesNotMatch(fallbackMeta, /super-secret|api[_-]?key/i);
+  // Real database, real session: the reported Lost & Found question must return actual seeded items.
+  const builtC = await builtInSession();
+  const lostFound = await builtInMessage(builtC, 'Can you read lost and found and answer me what all are actually found');
+  assert.match(lostFound.text, /listed as found/);
+  assert.match(lostFound.text, /Varsity Blazer|HydroFlask/);
+  assert.doesNotMatch(lostFound.text, /Communication is for requesting/);
+  assert.match(lostFound.meta, /"records"/);
+  assert.doesNotMatch(lostFound.meta, /Grade 10-A|VEX Robotics sticker|reporterUserId|contactInfo/);
+  assert.match((await builtInMessage(builtC, 'tell me more about the second one')).text, /HydroFlask/);
+  console.log('PASS authorized Lost & Found retrieval, follow-up resolution and field redaction');
   await fetch(builtIn + '/sessions/current', { method: 'DELETE', headers: { ...portalAuth, Authorization: 'Bearer ' + builtA } });
   assert.equal((await builtInMessage(builtA, 'hello')).status, 401);
   assert.equal((await builtInMessage('invalid', 'hello')).status, 401);
@@ -280,6 +297,14 @@ try {
   await send('Where are assignments?');
   await send('follow-up');
   assert.match(await widget.locator('.assistant').last().textContent(), /Where are assignments/);
+  // Tool records render as cards inside the same bubble, with every field written as text.
+  await send('what all is actually found');
+  assert.equal(await widget.locator('.records .record').count(), 2);
+  assert.match(await widget.locator('.records').first().textContent(), /Varsity Blazer/);
+  assert.match(await widget.locator('.records').first().textContent(), /unclaimed/);
+  assert.match(await widget.locator('.records').last().textContent(), /Computing Suite 104 Corridor/);
+  assert.equal(await widget.locator('.records img').count(), 0, 'record content must never become markup');
+  assert.equal(await page.evaluate(() => window.__echoXss), undefined, 'record content must not execute');
   const beforeCommands = traffic.length;
   const beforePortalRequests = portalRequests.length;
   await send('Open library');
@@ -685,7 +710,7 @@ try {
   await page.reload();
   await disabledConfig;
   assert.equal(await page.locator('echo-chat-widget').count(), 0);
-  console.log('PASS portal commands, verified feedback/failure, contextual help/suggestions, clipboard success/failure, stop/reset/error recovery, optional speech (on/off, speed, cancel, overlap, failure fallback), optional voice input (dictation, interim results, permission denial, Stop, Echo wake word, TTS pause/resume, unsupported browser), display modes, mobile, logout abort and account isolation; mock SSE for command flows, simulated recognizer/voice, plus a real built-in-engine follow-up navigation run (not real audio or provider evidence)');
+  console.log('PASS portal commands, verified feedback/failure, contextual help/suggestions, clipboard success/failure, stop/reset/error recovery, optional speech (on/off, speed, cancel, overlap, failure fallback), optional voice input (dictation, interim results, permission denial, Stop, Echo wake word, TTS pause/resume, unsupported browser), display modes, mobile, logout abort and account isolation, tool record cards rendered as text-only, plus real-database Lost & Found retrieval, follow-up resolution and field redaction through the built-in engine; mock SSE for command flows, simulated recognizer/voice (not real audio or provider evidence)');
 } finally {
   if (browser) await browser.close();
   for (const child of children) if (child.exitCode === null) child.kill();

@@ -23,6 +23,8 @@
     .plain{border:0;background:transparent;color:#294652;padding:7px;border-radius:6px}.messages{flex:1;overflow:auto;padding:16px;min-height:80px;overscroll-behavior:contain}
     .bubble{white-space:pre-wrap;overflow-wrap:anywhere;margin:0 0 12px;padding:10px 13px;border-radius:12px;background:#eef4f6}.user{background:#e3f0f2;margin-left:30px}.assistant{margin-right:15px}
     .references{display:block;font-size:12px;color:#465f6b;margin-top:9px}.status{min-height:24px;font-size:12px;color:#475f6c;padding:0 16px 6px}
+    .records{list-style:none;margin:10px 0 0;padding:0;display:grid;gap:7px}.record{border:1px solid #d3e1e6;border-radius:9px;padding:8px 10px;background:#fff;display:grid;gap:2px}
+    .record strong{font-size:13px;overflow-wrap:anywhere}.record-sub,.record-meta,.record-status{font-size:11px;color:#465f6b}.record-status{font-weight:600;color:#0f5b70}
     .suggestions{display:flex;flex-wrap:wrap;gap:4px;padding:0 12px 8px;max-height:100px;overflow:auto}.suggestions button,.copy{font-size:12px;border:1px solid #ccd9df;background:#fff;color:#294652;border-radius:6px;padding:4px 7px}.copy{display:block;margin-top:8px}.stop{border:1px solid #a7bec9;border-radius:8px;background:white;color:#294652;padding:10px}
     form{display:flex;align-items:end;gap:8px;padding:12px;border-top:1px solid #dce7eb}textarea{resize:none;flex:1;min-width:0;border:1px solid #a7bec9;border-radius:8px;padding:9px;color:#172832;background:#fff}
     .send{border:0;border-radius:8px;background:var(--accent);color:white;padding:10px 14px}.footer{font-size:11px;color:#566b75;padding:0 14px 9px}
@@ -708,6 +710,31 @@
     }
   });
 
+  // Tool results are plain structured data: every field is written with textContent, never HTML.
+  function recordList(records) {
+    const list = document.createElement("ul");
+    list.className = "records";
+    for (const record of records.slice(0, 8)) {
+      if (!record || typeof record !== "object") continue;
+      const row = document.createElement("li");
+      row.className = "record";
+      const title = document.createElement("strong");
+      title.textContent = String(record.title || "");
+      const subtitle = document.createElement("span");
+      subtitle.className = "record-sub";
+      subtitle.textContent = String(record.subtitle || "");
+      const meta = document.createElement("span");
+      meta.className = "record-meta";
+      meta.textContent = (Array.isArray(record.meta) ? record.meta : []).map(String).join(" · ");
+      const status = document.createElement("span");
+      status.className = "record-status";
+      status.textContent = String(record.status || "");
+      row.append(title, subtitle, meta, status);
+      list.append(row);
+    }
+    return list;
+  }
+
   async function request(path, options = {}) {
     // Same-origin built-in ECHO uses the portal's HttpOnly session cookie. Cross-origin
     // external ECHO origins never receive portal credentials.
@@ -818,6 +845,7 @@
               references.textContent = "References: " + data.references.map(item => item.title).join(", ");
               answer.append(references);
             }
+            if (Array.isArray(data.records) && data.records.length) answer.append(recordList(data.records));
           }
           log.scrollTop = log.scrollHeight;
         }

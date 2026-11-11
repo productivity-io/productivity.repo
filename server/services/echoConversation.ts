@@ -6,6 +6,7 @@
  * authenticated React layer before a message ever reaches this service.
  */
 import type { EchoIdentity } from './echo.js';
+import type { EchoRecord } from './echoData.js';
 
 export type EchoTurn = { user: string; assistant: string };
 export type EchoProviderInfo = {
@@ -25,6 +26,8 @@ export type EchoReply = {
   references: Array<{ title: string }>;
   provider?: EchoProviderInfo;
   action?: EchoNavigationAction;
+  /** Structured cards from an authorized read-only tool. Rendered, never interpreted. */
+  records?: EchoRecord[];
 };
 export type EchoContext = {
   name?: string;
@@ -134,11 +137,20 @@ const TOPICS: readonly Topic[] = [
   {
     id: 'communication',
     title: 'Communication, contacts & lost and found',
-    keywords: ['communication', 'communicaton', 'message', 'messages', 'contact', 'contacts', 'teacher', 'lost', 'found', 'it support'],
-    summary: 'Communication is for requesting a conversation with a teacher or coordinator, Contacts is the staff directory, and Lost & Found handles campus items.',
-    extra: 'Messages unlock once the other person accepts your request. Lost & Found also takes claim requests.',
+    keywords: ['communication', 'communicaton', 'message', 'messages', 'contact', 'contacts', 'teacher', 'it support'],
+    summary: 'Communication is for requesting a conversation with a teacher or coordinator, and Contacts is the staff directory.',
+    extra: 'Messages unlock once the other person accepts your request.',
     command: 'open communication',
     path: '/communication',
+  },
+  {
+    id: 'lost-found',
+    title: 'Lost & Found',
+    keywords: ['lost and found', 'lost & found', 'lost n found', 'found items', 'lost items', 'handed in', 'claim'],
+    summary: 'Lost & Found lists what students have reported missing and what has been handed in, with where each item was found and its claim status.',
+    extra: 'If something of yours is listed, open it and choose Claim — a coordinator verifies ownership before it is released.',
+    command: 'open lost and found',
+    path: '/lost-and-found',
   },
   {
     id: 'calendar',

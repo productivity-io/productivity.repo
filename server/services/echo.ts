@@ -17,6 +17,14 @@ import {
   rememberProviderUsage,
 } from './echoConversation.js';
 import type { EchoNavigationAction, EchoReply, NavigationOffer } from './echoConversation.js';
+import {
+  answerLostFoundRequest,
+  isLostFoundDataRequest,
+  isLostFoundFollowUp,
+  LOST_FOUND_UNAVAILABLE,
+  shapeLostFoundItems,
+  type LostFoundItem,
+} from './echoData.js';
 
 export type EchoWidgetConfig =
   | { enabled: false }
@@ -114,6 +122,11 @@ export interface EchoRouterOptions {
   /** Secure by default: without an authenticator, every session endpoint denies access. */
   authenticate?: (req: Request) => EchoIdentity | null;
   allowedOrigins?: readonly string[];
+  /**
+   * Authorized read-only Lost & Found reader supplied by the host app after it has authenticated
+   * the request. Absent, null or throwing is reported to the user instead of inventing records.
+   */
+  readLostFound?: (identity: EchoIdentity) => unknown;
   /** Deterministic clock for expiry tests. */
   now?: () => number;
 }
@@ -136,6 +149,33 @@ const ALLOWED_BODY_FIELDS = new Set(['message', 'page']);
 
 const sessionHistory = new Map<string, Array<{ user: string; assistant: string }>>();
 const revokedSessionIds = new Set<string>();
+
+/**
+ * Working memory for read-only tool results, bound to one authenticated session. It holds only the
+ * sanitized fields (no reporter, contact or claim data) and expires, so "the second one" can be
+ * resolved without keeping records around after the conversation ends.
+ */
+type DataMemory = { items: LostFoundItem[]; at: number };
+const DATA_MEMORY_TTL_MS = 30 * 60_000;
+const sessionData = new Map<string, DataMemory>();
+
+function rememberData(sid: string, items: LostFoundItem[]) {
+  if (!sessionData.has(sid) && sessionData.size >= MAX_SESSIONS) {
+    const oldest = sessionData.keys().next().value;
+    if (oldest !== undefined) sessionData.delete(oldest);
+  }
+  sessionData.set(sid, { items, at: Date.now() });
+}
+
+function readDataMemory(sid: string, now: number): DataMemory | null {
+  const memory = sessionData.get(sid);
+  if (!memory) return null;
+  if (now - memory.at > DATA_MEMORY_TTL_MS) {
+    sessionData.delete(sid);
+    return null;
+  }
+  return memory;
+}
 const messageTimestamps = new Map<string, number[]>();
 
 function rememberSession(sid: string, history: Array<{ user: string; assistant: string }> = []) {
@@ -184,6 +224,7 @@ function revokeSession(sid: string) {
   }
   revokedSessionIds.add(sid);
   sessionHistory.delete(sid);
+  sessionData.delete(sid);
   pendingNavigation.delete(sid);
 }
 
@@ -446,6 +487,31 @@ export function createEchoServiceRouter(options: EchoRouterOptions = {}): Router
         reply = pending ? navigationAcceptedReply(pending.action) : navigationExpiredReply();
       }
 
+      // Authorized read-only data runs after navigation and before any model call. The answer is
+      // composed from the portal's own records, so a list can never be invented, and record text
+      // is never sent to a provider.
+      if (!reply) {
+        const memory = readDataMemory(session.sid, now);
+        if (isLostFoundDataRequest(message) || (memory && isLostFoundFollowUp(message))) {
+          let items: LostFoundItem[] | null = null;
+          try {
+            items = options.readLostFound ? shapeLostFoundItems(options.readLostFound(identity)) : null;
+          } catch {
+            items = null;
+          }
+          if (items) {
+            const answer = answerLostFoundRequest(message, items, {
+              previous: memory?.items,
+              alreadyExplained: history.some(turn => /lost & found/i.test(turn.assistant)),
+            });
+            reply = { text: answer.text, references: [{ title: 'Lost & Found' }], records: answer.records };
+            rememberData(session.sid, answer.items);
+          } else {
+            reply = { text: LOST_FOUND_UNAVAILABLE, references: [{ title: 'Lost & Found' }] };
+          }
+        }
+      }
+
       if (!reply) {
         const providerReply = await generateProviderReply(message, history, context, abortController.signal).catch(() => null);
         const localReply = providerReply ? null : { ...buildEchoReply(message, history, context), provider: LOCAL_PROVIDER };
@@ -469,7 +535,11 @@ export function createEchoServiceRouter(options: EchoRouterOptions = {}): Router
         }
       }
 
-      history.push({ user: message, assistant: reply.text });
+      // Tool answers are summarized in history so record fields are never replayed to a provider.
+      const remembered = reply.records?.length
+        ? 'Shared the current Lost & Found list from the portal records.'
+        : reply.text;
+      history.push({ user: message, assistant: remembered });
       if (history.length > 10) history.splice(0, history.length - 10);
       rememberSession(session.sid, history);
 
@@ -499,7 +569,7 @@ export function createEchoServiceRouter(options: EchoRouterOptions = {}): Router
 
       if (!res.writableEnded && !res.destroyed) {
         // A structured action is the only way ECHO moves the router; the host re-validates it.
-        res.end(`event: done\ndata: ${JSON.stringify({ references: reply.references, action: reply.action })}\n\n`);
+        res.end(`event: done\ndata: ${JSON.stringify({ references: reply.references, action: reply.action, records: reply.records })}\n\n`);
       }
     } catch {
       if (!res.writableEnded && !res.destroyed) {
