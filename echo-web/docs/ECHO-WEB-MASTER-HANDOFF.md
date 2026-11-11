@@ -1,10 +1,12 @@
 # ECHO to Veritas - Master Handoff
 
-Updated: 2026-11-09. Local branch: `main`, based on `9d761e6`. FreeLLMAPI is
+Updated: 2026-11-11. Local branch: `main`, based on `9d761e6`. FreeLLMAPI is
 ECHO's verified primary conversational provider; deterministic commands,
 security gates and offline fallback are preserved; optional free browser speech
-is implemented. Phase 1 (conversational follow-up navigation) is complete and
-verified end to end.
+is implemented. Phase 1 (conversational follow-up navigation) and Phase 4 for
+Lost & Found (authorized read-only retrieval with grounded answers) are complete
+and verified end to end. ECHO is still routing without model tool-calling: data
+answers are composed server-side, not generated.
 
 ## Phase 1 - conversational follow-up navigation (2026-11-09)
 
@@ -95,8 +97,52 @@ release, disarm, and a browser without any recognizer. These are simulated-API
 tests, **not** real microphone or audio verification; no real-device audio run was
 possible in this environment.
 
-Authorized data retrieval and workspace visualisations remain **not** implemented;
-see "Remaining priorities" below.
+Workspace visualisations remain **not** implemented; Lost & Found retrieval is now
+implemented as Phase 4 below.
+
+## Phase 4 - authorized read-only data, Lost & Found (2026-11-11)
+
+The reported conversation, reproduced and fixed:
+
+> Can you read lost and found and answer me what all are actually found
+
+It previously answered "Communication is for requesting a conversation with a
+teacher or coordinator...". Cause: `lost`/`found` were keywords of the
+communication topic, and no tool could reach records at all. Two defects were
+fixed - the topic mapping, so "open lost and found" no longer offers
+`/communication`, and the missing data path.
+
+1. **A reader, not a prompt.** `createEchoServiceRouter({ readLostFound })`
+   receives a callback that `server/index.ts` supplies only after the request is
+   authenticated. It runs inside the same account-bound ECHO session, so no role
+   claim or user id ever travels in the message text.
+2. **Field allowlist.** `shapeLostFoundItems` in `server/services/echoData.ts`
+   keeps id, type, item name, category, location, date, status and a truncated
+   description. Reporter ids, contact info, claim notes and verification notes
+   are dropped before display, memory or logging.
+3. **Grounded answers.** The reply is composed on the server from those records:
+   real counts, names, locations and claim status, plus explicit "nothing
+   matches" and "records unavailable" paths. Lost & Found text is never sent to
+   FreeLLMAPI, and history stores only a summary, so a later provider turn cannot
+   receive the records either.
+4. **Working memory.** The last result set is kept per ECHO session (30-minute
+   TTL, deleted on revocation), so "the second one", "claim the blazer" and
+   "which ones haven't been claimed" resolve without re-asking. A second session
+   sees nothing.
+5. **Cards.** `done.records` carries `{ id, title, subtitle, meta[], status }` and
+   the widget renders each field with `textContent` only. A record containing
+   markup or an instruction stays inert text.
+6. **Stated limits.** Lost & Found is campus-wide and visible to any signed-in
+   account, matching the existing `/api/lost-found` page. Attendance, marks and
+   other per-student records are still not readable through ECHO.
+
+Verified by 12 tests in `tests/echo-lostfound.test.ts`: the exact reported
+request, a plain list, repeat-turn variation, the unclaimed filter, an ordinal
+follow-up, a claim follow-up, a no-match search, a missing reader, cross-account
+isolation, field redaction, prompt-injection record content, and navigation still
+working. The browser regression also asserts real-database retrieval through the
+built-in engine, follow-up resolution, redaction in the raw SSE, card rendering
+and a hostile record that must not execute.
 
 ## What changed
 
@@ -159,7 +205,7 @@ Command: `ECHO_USE_DESKTOP_SETTINGS=true node tests/echo-freellm-provider.mjs`.
 
 | Check | Result |
 | --- | --- |
-| 150 unit/integration tests: config, commands, conversation, navigation, security | PASS |
+| 162 unit/integration tests: config, commands, conversation, navigation, Lost & Found, security | PASS |
 | `tsc --noEmit` | PASS |
 | production `vite build` | PASS |
 | full browser regression | PASS |
@@ -178,9 +224,12 @@ Browser coverage includes login, typo commands, verified navigation feedback,
 context help, clipboard success/failure, Stop/reset/error recovery, speech
 on/off/speed/Stop/overlap/failure fallback, voice input (dictation, permission
 denial, Stop while listening, wake word, TTS pause/resume, unsupported browser),
-display modes, 390 px mobile, logout abort and second-account isolation. Browser
-regression uses fake SSE and a simulated recognizer; only the opt-in test proves
-a real model, and no test exercises a real microphone.
+tool record cards, display modes, 390 px mobile, logout abort and second-account
+isolation. It also drives the real built-in engine against the seeded database:
+the reported Lost & Found question returns real items, "the second one" resolves,
+and the raw SSE contains no reporter or contact fields. Browser regression uses
+fake SSE for command flows and a simulated recognizer; only the opt-in test
+proves a real model, and no test exercises a real microphone.
 
 ## Configuration contract
 
@@ -260,7 +309,12 @@ No credentials were exposed to frontend code. No paid provider is enabled.
 - `server/services/echo.ts`: authenticated router, account-bound sessions,
   origin/body/rate checks, SSE, page context.
 - `server/services/echoConversation.ts`: natural conversation, provider priority,
-  FreeLLMAPI/OpenAI config, status/probe, usage metadata.
+  FreeLLMAPI/OpenAI config, status/probe, usage metadata, topic allowlist
+  (including the separate Lost & Found topic).
+- `server/services/echoData.ts`: authorized read-only Lost & Found tool, field
+  allowlist, intent detection, grounded answer composition, record cards.
+- `tests/echo-lostfound.test.ts`: 12 Lost & Found retrieval, memory and
+  authorization tests.
 - `server/index.ts`: authenticated `/api/echo/config`, `/api/echo/provider`, ECHO
   mount with cookie/Bearer portal identity.
 - `src/lib/echoCommands.ts`, `src/lib/echoRecognition.ts`: registry, fuzzy
@@ -289,10 +343,12 @@ Phase 1 navigation: `0013123` (feat(echo): execute offered navigation from
 conversational follow-ups). Phase 2 workspace modes: `6cef2ab`
 (feat(echo): add expanded and full-screen workspace modes). Phase 3 voice input:
 `89202cb` (feat(echo): add optional microphone input and a foreground "Echo"
-wake word). Documentation commits sit on top; use `git log --oneline` for the
-exact current HEAD.
+wake word). Phase 4 Lost & Found: `708fe80`
+(feat(echo): answer Lost & Found questions from authorized records).
+Documentation commits sit on top; use `git log --oneline` for the exact current
+HEAD.
 
-`npm run test:echo`: **150/150 PASS**.
+`npm run test:echo`: **162/162 PASS**.
 `tsc --noEmit`: PASS.
 `npm run build`: PASS (2045 modules).
 `npm run test:echo:browser`: PASS, including the real built-in engine run.
@@ -309,17 +365,15 @@ status alone is not provider proof. Do not force-push.
 
 ## Remaining priorities (not implemented)
 
-1. **Authorized data retrieval.** No `get_authorized_*` tools exist. The portal
-API is read-only for the signed-in account and there is no documented grade
-projection feature, so ECHO must not invent one. Concrete starting point:
-`GET /api/attendance` (`server/index.ts` ~line 930) and `GET /api/assignments`
-(~line 1200) already branch on `req.currentUser!.role`; the student branch
-returns only that student's own records, while the staff branch returns every
-student's rows. A future tool layer should call the same queries server-side, key
-by `req.auth`/session `sub`, and pass the model only aggregates (counts, rates,
-due dates) - never names or raw staff-visible rows - because model prompts leave
-the server. There is no tool-calling loop in `server/services/echoConversation.ts`
-today, and it cannot be verified here: `test:echo:provider` needs the FreeLLMAPI
+1. **More authorized tools.** Lost & Found is the first and only tool so far.
+`GET /api/attendance` (`server/index.ts` ~line 930) and
+`GET /api/assignments` (~line 1200) already branch on `req.currentUser!.role`;
+the student branch returns only that student's own records, the staff branch
+returns every student's rows. Add each as its own `readX` option on
+`createEchoServiceRouter` with its own field allowlist, and pass the model only
+aggregates (counts, rates, due dates) - never names or raw staff-visible rows -
+because model prompts leave the server. There is no model tool-calling loop by
+design, and one cannot be verified here: `test:echo:provider` needs the FreeLLMAPI
 desktop gateway, which is not reachable in this environment.
 2. **Charts/tables in the workspace.** `recharts` is already a dependency, but
 ECHO renders text only. Structured results need server-validated payloads first,
@@ -351,14 +405,16 @@ command/conversation/Stop/TTS path) are complete. FreeLLMAPI is still the primar
 conversational brain, with deterministic commands, security gates, offline
 fallback and free browser speech in both directions.
 
-Next priorities, in order: (1) authorized read-only data tools with account/role
-scoping and no raw records in model context; only then (2) tables/charts for
-validated results, and only where real supported data exists. The portal has no
-documented grade-projection feature, so do not invent one. Real microphone and
+Phase 4 is implemented for Lost & Found only: `server/services/echoData.ts` plus
+`readLostFound` on the router, with session-scoped result memory, sanitized fields
+and record cards. Next priorities, in order: (1) the same pattern for attendance
+and assignments, scoped by `sub`/role with aggregates only; (2) charts for
+validated numeric results, only where real supported data exists. The portal has
+no documented grade-projection feature, so do not invent one. Real microphone and
 real-device audio verification still needs hardware this environment lacks.
 
 Do not recreate completed features, weaken tests or enable a paid provider.
-After any change, rerun `npm run test:echo` (150 tests), `npx tsc --noEmit`,
+After any change, rerun `npm run test:echo` (162 tests), `npx tsc --noEmit`,
 `npm run build` and `npm run test:echo:browser`; the opt-in provider test needs
 the FreeLLMAPI desktop gateway. Keep the Markdown/PDF handoffs and
 `F:\ECHO-Handoff` copies current. Verify the deployed site after pushing; do not
