@@ -31,6 +31,7 @@ import {
   type PortalSnapshot,
   type ToolMemory,
 } from './echoTools.js';
+import { runSelectedTools, shouldAttemptToolSelection } from './echoToolSelect.js';
 
 export type EchoWidgetConfig =
   | { enabled: false }
@@ -523,7 +524,8 @@ export function createEchoServiceRouter(options: EchoRouterOptions = {}): Router
       // Authorized read-only data runs after navigation and before any model call. The answer is
       // composed from the portal's own records, so a list can never be invented, and record text
       // is never sent to a provider.
-      if (!reply) {
+      const multiModule = shouldAttemptToolSelection(message);
+      if (!reply && !multiModule) {
         const memory = readDataMemory(session.sid, now);
         if (isLostFoundDataRequest(message) || (memory && isLostFoundFollowUp(message))) {
           let items: LostFoundItem[] | null = null;
@@ -545,8 +547,39 @@ export function createEchoServiceRouter(options: EchoRouterOptions = {}): Router
         }
       }
 
-      // Module tools use the same contract: authorized snapshot in, grounded answer out. Anything
-      // the host app cannot read for this account is reported instead of guessed.
+      // Model-assisted selection for multi-module requests. The model proposes tool names only;
+      // every call is validated here and executed against the same authorized snapshot, and the
+      // reply is composed server-side, so no record text reaches the provider.
+      if (!reply) {
+        let selectionSnapshot: PortalSnapshot | null = null;
+        try {
+          selectionSnapshot = options.readPortal ? (options.readPortal(identity) as PortalSnapshot) : null;
+        } catch {
+          selectionSnapshot = null;
+        }
+        let selectionLostFound: ReturnType<typeof shapeLostFoundItems> | null = null;
+        try {
+          selectionLostFound = options.readLostFound ? shapeLostFoundItems(options.readLostFound(identity)) : null;
+        } catch {
+          selectionLostFound = null;
+        }
+        const selected = await runSelectedTools({
+          message,
+          history,
+          snapshot: selectionSnapshot,
+          lostFound: selectionLostFound,
+          memory: readToolMemory(session.sid, now)?.memory,
+          clock: { now, timeZone: process.env.ECHO_PORTAL_TIMEZONE || 'UTC' },
+          signal: abortController.signal,
+        }).catch(() => null);
+        if (selected) {
+          reply = { text: selected.text, references: selected.references, records: selected.records };
+          rememberToolMemory(session.sid, selected.memory);
+        }
+      }
+
+      // Deterministic module answers: one module per message, authorized snapshot in, grounded
+      // answer out. Anything the host app cannot read is reported instead of guessed.
       if (!reply) {
         const toolMemory = readToolMemory(session.sid, now);
         const module = detectPortalModule(message, toolMemory?.memory.lastModule);
