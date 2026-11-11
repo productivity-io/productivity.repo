@@ -557,7 +557,10 @@ export function createEchoServiceRouter(options: EchoRouterOptions = {}): Router
           } catch {
             snapshot = null;
           }
-          const answer = answerPortalRequest(message, module, snapshot, toolMemory?.memory);
+          const answer = answerPortalRequest(message, module, snapshot, toolMemory?.memory, {
+            now,
+            timeZone: process.env.ECHO_PORTAL_TIMEZONE || 'UTC',
+          });
           reply = {
             text: answer.text,
             references: [{ title: answer.title }],

@@ -41,7 +41,7 @@ const PORTAL = {
 
 const servers: Server[] = [];
 
-async function makeServer(readPortal?: () => unknown, readLostFound?: () => unknown) {
+async function makeServer(readPortal?: () => unknown, readLostFound?: () => unknown, now?: () => number) {
   const { createEchoServiceRouter } = await import('../server/services/echo.ts');
   const app = express();
   app.use(express.json());
@@ -52,6 +52,7 @@ async function makeServer(readPortal?: () => unknown, readLostFound?: () => unkn
     },
     ...(readPortal ? { readPortal } : {}),
     ...(readLostFound ? { readLostFound } : {}),
+    ...(now ? { now } : {}),
   }));
   const server = await new Promise<Server>(resolve => {
     const instance = app.listen(0, '127.0.0.1', () => resolve(instance));
@@ -89,6 +90,25 @@ async function ask(base: string, token: string, message: string, user = 'account
   return { text, raw, action: payload.action, records: payload.records };
 }
 
+// Monday 09:30 UTC: period 1 is over, period 3 (Physics, Room B) is next at 09:45.
+const MONDAY_0930 = Date.UTC(2026, 10, 9, 9, 30);
+const SATURDAY_0930 = Date.UTC(2026, 10, 7, 9, 30);
+// Tuesday 03:00 UTC is Monday 19:00 in Los Angeles: the zone, not the host clock, decides the day.
+const TZ_CROSSOVER = Date.UTC(2026, 10, 10, 3, 0);
+
+const TIMETABLE = [
+  { dayOfWeek: 'Monday', periodNumber: 1, startTime: '08:00 AM', endTime: '08:45 AM', subjectName: 'Mathematics', teacherName: 'Mr. Rajesh Nair', roomNumber: 'Room A', isBreak: false, status: 'scheduled' },
+  { dayOfWeek: 'Monday', periodNumber: 2, startTime: '08:45 AM', endTime: '09:00 AM', subjectName: '', breakLabel: 'Morning Break', roomNumber: '', isBreak: true, status: 'scheduled' },
+  { dayOfWeek: 'Monday', periodNumber: 3, startTime: '09:45 AM', endTime: '10:30 AM', subjectName: 'Physics', teacherName: 'Ms. Clara Oswald', roomNumber: 'Room B', isBreak: false, status: 'scheduled' },
+  { dayOfWeek: 'Tuesday', periodNumber: 1, startTime: '08:00 AM', endTime: '08:45 AM', subjectName: 'Chemistry', teacherName: 'Dr. Bose', roomNumber: 'Lab 1', isBreak: false, status: 'scheduled' },
+];
+
+const ANNOUNCEMENTS = [
+  { id: 1, title: 'Mid-Term Exam Schedule Published', content: 'Grade 10 mid-term examinations begin on 24 November.', category: 'academic', priority: 'important', authorName: 'Coordinator', publishedAt: '2026-11-08T09:00:00Z', isRead: false, isEmergency: false },
+  { id: 2, title: 'Science Fair Registration', content: 'Register by Friday for the annual science fair.', category: 'event', priority: 'normal', authorName: 'Ms. Priya', publishedAt: '2026-11-07T10:00:00Z', isRead: true, isEmergency: false },
+  { id: 3, title: 'Water Supply Interruption', content: 'Water will be off between 14:00 and 16:00.', category: 'school_wide', priority: 'critical', authorName: 'Principal', publishedAt: '2026-11-06T08:00:00Z', isRead: false, isEmergency: true },
+];
+
 let base: string;
 
 before(async () => {
@@ -98,10 +118,15 @@ before(async () => {
   delete process.env.ECHO_MODEL_API_KEY;
   process.env.ECHO_CHAT_ENABLED = 'true';
   process.env.ECHO_SITE_ID = 'productivity-portal';
-  base = await makeServer(() => PORTAL, () => [{
-    id: 5, type: 'found', itemName: 'Navy Blue Scarf', category: 'apparel',
-    location: 'Central Library', dateReported: iso(-1), status: 'reported',
-  }]);
+  process.env.ECHO_PORTAL_TIMEZONE = 'UTC';
+  base = await makeServer(
+    () => ({ ...PORTAL, timetable: TIMETABLE, announcements: ANNOUNCEMENTS }),
+    () => [{
+      id: 5, type: 'found', itemName: 'Navy Blue Scarf', category: 'apparel',
+      location: 'Central Library', dateReported: iso(-1), status: 'reported',
+    }],
+    () => MONDAY_0930,
+  );
 });
 
 after(async () => {
@@ -225,4 +250,89 @@ test('Lost & Found still answers from its own reader alongside the module tools'
   assert.match(answer.text, /Central Library/);
   assert.doesNotMatch(answer.text, /Communication is for requesting/);
   assert.equal(answer.records?.length, 1);
+});
+
+test('the next class is resolved from the timetable and the configured clock', async () => {
+  const token = await newSession(base);
+  const answer = await ask(base, token, 'what’s my next class?');
+  assert.match(answer.text, /next class is Physics/);
+  assert.match(answer.text, /Room B/);
+  assert.match(answer.text, /09:45/);
+  assert.doesNotMatch(answer.text, /Mathematics/);
+});
+
+test('a named day lists that day’s published periods', async () => {
+  const token = await newSession(base);
+  const answer = await ask(base, token, 'what’s my timetable on Tuesday?');
+  assert.match(answer.text, /Chemistry/);
+  assert.match(answer.text, /Lab 1/);
+  assert.doesNotMatch(answer.text, /Physics/);
+});
+
+test('a weekend day points at the next school day instead of inventing classes', async () => {
+  const weekend = await makeServer(() => ({ timetable: TIMETABLE }), undefined, () => SATURDAY_0930);
+  const token = await newSession(weekend);
+  const answer = await ask(weekend, token, 'what classes do I have today?');
+  assert.match(answer.text, /no classes today/);
+  assert.match(answer.text, /Monday/);
+  assert.match(answer.text, /Mathematics/);
+});
+
+test('the timetable day follows the configured time zone, not the host clock', async () => {
+  const zoned = await makeServer(() => ({ timetable: TIMETABLE }), undefined, () => TZ_CROSSOVER);
+  process.env.ECHO_PORTAL_TIMEZONE = 'America/Los_Angeles';
+  try {
+    const token = await newSession(zoned);
+    const answer = await ask(zoned, token, 'what’s my timetable today?');
+    assert.match(answer.text, /Mathematics/);
+    assert.doesNotMatch(answer.text, /Chemistry/);
+  } finally {
+    process.env.ECHO_PORTAL_TIMEZONE = 'UTC';
+  }
+});
+
+test('room questions read the published room', async () => {
+  const token = await newSession(base);
+  const answer = await ask(base, token, 'which room is physics in?');
+  assert.match(answer.text, /Room B/);
+  assert.match(answer.text, /Monday/);
+});
+
+test('announcements are listed from the authorized rows', async () => {
+  const token = await newSession(base);
+  const answer = await ask(base, token, 'what’s new in announcements?');
+  assert.match(answer.text, /There are 3 announcements/);
+  assert.match(answer.text, /Mid-Term Exam Schedule Published/);
+  assert.equal(answer.records?.length, 3);
+});
+
+test('unread announcements are filtered from the account’s own read state', async () => {
+  const token = await newSession(base);
+  const answer = await ask(base, token, 'any unread announcements?');
+  assert.match(answer.text, /Mid-Term Exam Schedule/);
+  assert.match(answer.text, /Water Supply Interruption/);
+  assert.doesNotMatch(answer.text, /Science Fair/);
+});
+
+test('announcement search matches a specific notice', async () => {
+  const token = await newSession(base);
+  const answer = await ask(base, token, 'anything about the science fair in announcements?');
+  assert.match(answer.text, /Science Fair Registration/);
+  assert.doesNotMatch(answer.text, /Water Supply|Mid-Term/);
+});
+
+test('announcements the host app cannot read are reported, not summarised', async () => {
+  const withoutReader = await makeServer(() => ({}));
+  const token = await newSession(withoutReader);
+  const answer = await ask(withoutReader, token, 'what’s new in announcements?');
+  assert.match(answer.text, /reach the announcements/);
+  assert.equal(answer.records, undefined);
+});
+
+test('a timetable for another account’s class is not exposed', async () => {
+  const noTimetable = await makeServer(() => ({}));
+  const token = await newSession(noTimetable);
+  const answer = await ask(noTimetable, token, 'what’s my next class?');
+  assert.match(answer.text, /reach a timetable/);
+  assert.doesNotMatch(answer.text, /Room B|Physics/);
 });

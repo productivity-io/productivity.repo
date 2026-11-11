@@ -152,9 +152,21 @@ app.use('/api/echo/v1/sites', createEchoServiceRouter({
   readPortal: (identity: EchoIdentity) => {
     const userId = Number(identity.sub);
     if (!Number.isInteger(userId) || userId <= 0) return null;
+    const account = db.select().from(schema.users).where(eq(schema.users.id, userId)).get();
+    if (!account) return null;
     const snapshot: Record<string, unknown> = {
       contacts: db.select().from(schema.quickContacts).all(),
     };
+    // Same visibility rule as GET /api/announcements: published, authored by the account, or a
+    // reviewer role. Read state comes from that account's own announcement_reads rows.
+    const reads = db.select().from(schema.announcementReads)
+      .where(eq(schema.announcementReads.userId, userId)).all();
+    const readSet = new Set(reads.map(row => row.announcementId));
+    snapshot.announcements = db.select().from(schema.announcements)
+      .orderBy(desc(schema.announcements.createdAt)).all()
+      .filter(row => account.role === 'principal' || account.role === 'coordinator'
+        || row.authorId === userId || row.approvalStatus === 'approved')
+      .map(row => ({ ...row, isRead: readSet.has(row.id) }));
     const student = db.select().from(schema.students).where(eq(schema.students.userId, userId)).get();
     if (!student) return snapshot;
 
@@ -185,6 +197,22 @@ app.use('/api/echo/v1/sites', createEchoServiceRouter({
           teacherName: teachers.find(teacher => teacher.id === row.teacherId)?.fullName || '',
         };
       });
+    snapshot.timetable = db.select().from(schema.timetables).all()
+      .filter(row => row.classId === student.classId && row.sectionId === student.sectionId)
+      .map(row => ({
+        dayOfWeek: row.dayOfWeek,
+        periodNumber: row.periodNumber,
+        startTime: row.startTime,
+        endTime: row.endTime,
+        subjectName: subjects.find(subject => subject.id === row.subjectId)?.name || '',
+        teacherName: teachers.find(teacher => teacher.id === row.teacherId)?.fullName || '',
+        substitutionTeacherName: teachers.find(teacher => teacher.id === row.substitutionTeacherId)?.fullName || '',
+        roomNumber: row.roomNumber,
+        isBreak: row.isBreak,
+        breakLabel: row.breakLabel || '',
+        status: row.status,
+        statusNote: row.statusNote || '',
+      }));
     return snapshot;
   },
 }));

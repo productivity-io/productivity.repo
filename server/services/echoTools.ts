@@ -7,12 +7,14 @@
  */
 import type { EchoRecord } from './echoData.js';
 
-export type PortalModule = 'attendance' | 'assignments' | 'contacts';
+export type PortalModule = 'attendance' | 'assignments' | 'contacts' | 'timetable' | 'announcements';
 
 export type PortalSnapshot = {
   attendance?: unknown;
   assignments?: unknown;
   contacts?: unknown;
+  timetable?: unknown;
+  announcements?: unknown;
 };
 
 export type ToolMemory = {
@@ -112,6 +114,70 @@ export function shapeContacts(raw: unknown): ContactRow[] | null {
   return rows;
 }
 
+export type TimetableRow = {
+  day: string; period: number; start: string; end: string; subject: string; teacher: string;
+  room: string; isBreak: boolean; breakLabel: string; status: string;
+  substitutionTeacher: string; note: string;
+};
+
+export type AnnouncementRow = {
+  id: number; title: string; content: string; category: string; priority: string;
+  author: string; publishedAt: string; isRead: boolean; isEmergency: boolean;
+};
+
+/** Clock used for "today", "tomorrow" and "next class". The zone is explicit, never the host's. */
+export type PortalClock = { now: number; timeZone: string };
+
+export function shapeTimetable(raw: unknown): TimetableRow[] | null {
+  if (!Array.isArray(raw)) return null;
+  const rows: TimetableRow[] = [];
+  for (const entry of raw) {
+    if (!entry || typeof entry !== 'object') continue;
+    const row = entry as Record<string, unknown>;
+    const day = text(row.dayOfWeek ?? row.day, 20);
+    if (!day) continue;
+    rows.push({
+      day,
+      period: Number(row.periodNumber ?? row.period) || 0,
+      start: text(row.startTime ?? row.start, 20),
+      end: text(row.endTime ?? row.end, 20),
+      subject: text(row.subjectName ?? row.subject, 80),
+      teacher: text(row.teacherName ?? row.teacher, 80),
+      room: text(row.roomNumber ?? row.room, 60),
+      isBreak: Boolean(row.isBreak),
+      breakLabel: text(row.breakLabel, 40),
+      status: text(row.status, 20) || 'scheduled',
+      substitutionTeacher: text(row.substitutionTeacherName, 80),
+      note: text(row.statusNote, 140),
+    });
+  }
+  return rows;
+}
+
+export function shapeAnnouncements(raw: unknown): AnnouncementRow[] | null {
+  if (!Array.isArray(raw)) return null;
+  const rows: AnnouncementRow[] = [];
+  for (const entry of raw) {
+    if (!entry || typeof entry !== 'object') continue;
+    const row = entry as Record<string, unknown>;
+    const id = Number(row.id);
+    const title = text(row.title, 160);
+    if (!Number.isInteger(id) || id <= 0 || !title) continue;
+    rows.push({
+      id,
+      title,
+      content: text(row.content, 400),
+      category: text(row.category, 40),
+      priority: text(row.priority, 20) || 'normal',
+      author: text(row.authorName, 80),
+      publishedAt: text(row.publishedAt, 40),
+      isRead: Boolean(row.isRead),
+      isEmergency: Boolean(row.isEmergency),
+    });
+  }
+  return rows;
+}
+
 export const MODULE_UNAVAILABLE: Record<PortalModule, string> = {
   attendance:
     'I couldn’t reach your attendance records just now, so I won’t guess at the numbers. The Attendance page shows the live record and I can take you there.',
@@ -119,12 +185,18 @@ export const MODULE_UNAVAILABLE: Record<PortalModule, string> = {
     'I couldn’t reach your assignment records just now, so I won’t invent a deadline. The Assignments page shows the live list.',
   contacts:
     'I couldn’t reach the staff directory just now, so I won’t guess at names or addresses. The Contacts page has the current list.',
+  timetable:
+    'I couldn’t reach a timetable for this account, so I won’t guess at rooms or times. Your own class timetable is the only one I can read; the Timetable page shows what is published.',
+  announcements:
+    'I couldn’t reach the announcements for this account just now, so I won’t summarise from memory. The Announcements page shows the live list.',
 };
 
 const MODULE_TITLE: Record<PortalModule, string> = {
   attendance: 'Attendance',
   assignments: 'Assignments',
   contacts: 'Contacts',
+  timetable: 'Timetable',
+  announcements: 'Announcements',
 };
 
 const EXPLANATION = /\b(?:explain|what does|how does|what is the .{0,20} (?:page|module)|what are .{0,20} for)\b/;
@@ -133,6 +205,8 @@ const EXPLANATION = /\b(?:explain|what does|how does|what is the .{0,20} (?:page
 const EXPLANATION_LEAD = /^(?:what (?:are|is)|tell me about|describe)\b/;
 const DATA_CUE = /\b(?:my|mine|due|overdue|this week|next week|tomorrow|today|percentage|how many|lowest|weakest|which|missing|submitted)\b/;
 const NAVIGATION = /^(?:open|go to|go back|take me|navigate|bring up|pull up|switch to|head to)\b/;
+const ANNOUNCEMENTS = /\b(?:announcements?|notices?|circulars?|notice ?board)\b|\bwhat'?s new\b/;
+const TIMETABLE = /\b(?:timetable|time table|periods?|next (?:class|period|lesson)|which room|what room|room number|schedule)\b|\bclasses? (?:do|have|today|tomorrow|on)\b/;
 const FOLLOW_UP = /^(?:what|how|which|and|also|anything|what about|how about|what else|more)\b/;
 
 /**
@@ -144,6 +218,10 @@ export function detectPortalModule(message: string, lastModule?: PortalModule): 
   if (!value || value.length > 400) return null;
   if (NAVIGATION.test(value) || EXPLANATION.test(value)) return null;
   if (EXPLANATION_LEAD.test(value) && !DATA_CUE.test(value)) return null;
+  if (ANNOUNCEMENTS.test(value)) return 'announcements';
+  // Timetable questions can start with "where is" ("where is my next class"), so they are decided
+  // before the page-location guard below.
+  if (TIMETABLE.test(value)) return 'timetable';
   // "Where can I see my attendance?" is a location/guidance question: it keeps the navigation
   // offer lifecycle instead of being answered with numbers.
   if (/^(?:where\b|how (?:do|can|should|would) i\b|how does\b)/.test(value)) return null;
@@ -380,6 +458,175 @@ function answerContacts(message: string, rows: readonly ContactRow[]): ToolAnswe
   return { title, text: [lead, ...lines].join('\n'), records, memory };
 }
 
+const DAYS = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday'];
+
+function minutesOf(value: string): number {
+  const match = /^(\d{1,2}):(\d{2})\s*(am|pm)?/i.exec(String(value || '').trim());
+  if (!match) return Number.NaN;
+  let hour = Number(match[1]);
+  const minute = Number(match[2]);
+  const suffix = (match[3] || '').toLowerCase();
+  if (suffix === 'pm' && hour < 12) hour += 12;
+  if (suffix === 'am' && hour === 12) hour = 0;
+  return hour * 60 + minute;
+}
+
+/** School-local date, weekday and minute-of-day for the configured zone (never the host's zone). */
+export function zonedClock(now: number, timeZone: string): { iso: string; weekday: string; minutes: number } {
+  const date = new Date(now);
+  try {
+    const zone = timeZone || 'UTC';
+    const parts = new Intl.DateTimeFormat('en-CA', { timeZone: zone, year: 'numeric', month: '2-digit', day: '2-digit' }).formatToParts(date);
+    const part = (type: string) => parts.find(item => item.type === type)?.value || '';
+    const weekday = new Intl.DateTimeFormat('en-US', { timeZone: zone, weekday: 'long' }).format(date);
+    const time = new Intl.DateTimeFormat('en-US', { timeZone: zone, hour: '2-digit', minute: '2-digit', hourCycle: 'h23' }).formatToParts(date);
+    const hour = Number(time.find(item => item.type === 'hour')?.value || '0');
+    const minute = Number(time.find(item => item.type === 'minute')?.value || '0');
+    return { iso: `${part('year')}-${part('month')}-${part('day')}`, weekday, minutes: hour * 60 + minute };
+  } catch {
+    return {
+      iso: date.toISOString().slice(0, 10),
+      weekday: new Intl.DateTimeFormat('en-US', { timeZone: 'UTC', weekday: 'long' }).format(date),
+      minutes: date.getUTCHours() * 60 + date.getUTCMinutes(),
+    };
+  }
+}
+
+function followingSchoolDay(day: string): string {
+  const index = DAYS.indexOf(day);
+  if (index === -1) return 'Monday';
+  return DAYS[(index + 1) % DAYS.length];
+}
+
+function timetableCards(rows: readonly TimetableRow[]): EchoRecord[] {
+  return rows.slice(0, MAX_ITEMS).map(row => ({
+    id: `timetable-${row.day}-${row.period}`,
+    title: row.isBreak ? row.breakLabel || 'Break' : row.subject || `Period ${row.period}`,
+    subtitle: `${row.start}–${row.end}${row.room ? ` · ${row.room}` : ''}`,
+    meta: [row.day],
+    status: row.isBreak ? 'break' : row.status === 'scheduled' ? row.teacher : row.status,
+  }));
+}
+
+function answerTimetable(message: string, rows: readonly TimetableRow[], clock: PortalClock): ToolAnswer {
+  const value = normalize(message);
+  const memory: ToolMemory = { lastModule: 'timetable' };
+  if (!rows.length) {
+    return { title: 'Timetable', text: 'No timetable is published for your class yet, so I can’t say what is next.', records: [], memory };
+  }
+  const now = zonedClock(clock.now, clock.timeZone);
+  const lessons = rows.filter(row => !row.isBreak);
+  const named = DAYS.find(day => value.includes(day.toLowerCase()));
+  const targetDay = named || (/\btomorrow\b/.test(value) ? followingSchoolDay(now.weekday) : now.weekday);
+  const dayRows = rows.filter(row => row.day === targetDay).sort((a, b) => a.period - b.period);
+
+  const subjectMatch = lessons.find(row => {
+    const name = normalize(row.subject);
+    return Boolean(name) && name.split(' ').some(word => word.length >= 4 && value.includes(word));
+  });
+  if (subjectMatch && /\b(?:which|what) room\b|\bwhere\b/.test(value)) {
+    return {
+      title: 'Timetable',
+      text: `${subjectMatch.subject} is in ${subjectMatch.room || 'a room that isn’t recorded'} on ${subjectMatch.day} — Period ${subjectMatch.period}, ${subjectMatch.start}–${subjectMatch.end}${subjectMatch.teacher ? `, with ${subjectMatch.teacher}` : ''}.`,
+      records: timetableCards([subjectMatch]),
+      memory,
+    };
+  }
+
+  if (/\bnext (?:class|period|lesson)\b|\bwhat'?s next\b/.test(value)) {
+    const today = lessons.filter(row => row.day === now.weekday && row.status !== 'cancelled').sort((a, b) => a.period - b.period);
+    const upcoming = today.find(row => minutesOf(row.start) >= now.minutes);
+    if (upcoming) {
+      const cover = upcoming.status === 'substituted' && upcoming.substitutionTeacher ? ` (covered by ${upcoming.substitutionTeacher})` : '';
+      return {
+        title: 'Timetable',
+        text: `Your next class is ${upcoming.subject || `Period ${upcoming.period}`} — ${upcoming.start}–${upcoming.end}${upcoming.room ? ` in ${upcoming.room}` : ''}${upcoming.teacher ? `, with ${upcoming.teacher}` : ''}${cover}.`,
+        records: timetableCards([upcoming]),
+        memory,
+      };
+    }
+    const nextDay = followingSchoolDay(now.weekday);
+    const first = lessons.filter(row => row.day === nextDay && row.status !== 'cancelled').sort((a, b) => a.period - b.period)[0];
+    const dayNote = DAYS.includes(now.weekday) ? 'No classes are left today.' : `It’s ${now.weekday}, so there are no classes today.`;
+    return {
+      title: 'Timetable',
+      text: `${dayNote} The next school day is ${nextDay}${first ? `, starting with ${first.subject || `Period ${first.period}`} at ${first.start}` : ''}.`,
+      records: first ? timetableCards([first]) : [],
+      memory,
+    };
+  }
+
+  if (!DAYS.includes(targetDay)) {
+    const first = lessons.filter(row => row.day === 'Monday').sort((a, b) => a.period - b.period)[0];
+    return {
+      title: 'Timetable',
+      text: `It’s ${now.weekday}, so there are no classes today. The next school day is Monday${first ? `, starting with ${first.subject || `Period ${first.period}`} at ${first.start}` : ''}.`,
+      records: first ? timetableCards([first]) : [],
+      memory,
+    };
+  }
+  if (!dayRows.length) {
+    return { title: 'Timetable', text: `No periods are published for ${targetDay}.`, records: [], memory };
+  }
+  const lines = dayRows.map(row => row.isBreak
+    ? `• ${row.start}–${row.end} ${row.breakLabel || 'Break'}`
+    : `• ${row.start}–${row.end} ${row.subject || `Period ${row.period}`}${row.room ? ` — ${row.room}` : ''}${row.teacher ? ` (${row.teacher})` : ''}${row.status === 'cancelled' ? ' — cancelled' : row.status === 'substituted' && row.substitutionTeacher ? ` — covered by ${row.substitutionTeacher}` : ''}`);
+  const lessonCount = dayRows.filter(row => !row.isBreak).length;
+  return {
+    title: 'Timetable',
+    text: `${targetDay} has ${lessonCount} ${lessonCount === 1 ? 'period' : 'periods'}:\n${lines.join('\n')}`,
+    records: timetableCards(dayRows),
+    memory,
+  };
+}
+
+const ANNOUNCEMENT_STOPWORDS = new Set([
+  'what', 'whats', 'new', 'announcement', 'announcements', 'notice', 'notices', 'any', 'anything',
+  'about', 'the', 'are', 'there', 'in', 'for', 'is', 'unread', 'read', 'show', 'list', 'tell', 'me',
+  'latest', 'recent', 'today', 'this', 'week', 'from', 'have', 'has', 'been', 'posted', 'published',
+]);
+
+function answerAnnouncements(message: string, rows: readonly AnnouncementRow[]): ToolAnswer {
+  const value = normalize(message);
+  const memory: ToolMemory = { lastModule: 'announcements' };
+  if (!rows.length) {
+    return { title: 'Announcements', text: 'There are no announcements published for your account right now.', records: [], memory };
+  }
+  const unreadOnly = /\bunread\b|\bnot read\b|\bhaven'?t read\b/.test(value);
+  const terms = value.split(' ').filter(word => word.length >= 3 && !ANNOUNCEMENT_STOPWORDS.has(word));
+  const keyed = terms.length
+    ? rows.filter(row => terms.some(term => normalize([row.title, row.content, row.category].join(' ')).includes(term)))
+    : [];
+  const scoped = (keyed.length ? keyed : rows).filter(row => (unreadOnly ? !row.isRead : true));
+
+  if (!scoped.length) {
+    return {
+      title: 'Announcements',
+      text: unreadOnly
+        ? `You’re up to date — none of the ${rows.length} announcements for your account are unread.`
+        : 'Nothing matches that in the announcements for your account.',
+      records: [],
+      memory,
+    };
+  }
+
+  const shown = scoped.slice(0, 5);
+  const lead = scoped.length === 1 ? 'There’s one announcement' : `There are ${scoped.length} announcements`;
+  const lines = shown.map(row => `• ${row.title} — ${row.category.replace(/_/g, ' ')}, ${formatDate(row.publishedAt.slice(0, 10))}${row.priority !== 'normal' ? `, ${row.priority}` : ''}${row.isEmergency ? ' (emergency)' : ''}`);
+  return {
+    title: 'Announcements',
+    text: [`${lead}${unreadOnly ? ' unread' : ''}:`, ...lines].join('\n'),
+    records: shown.map(row => ({
+      id: `announcement-${row.id}`,
+      title: row.title,
+      subtitle: [row.category.replace(/_/g, ' '), row.author].filter(Boolean).join(' · '),
+      meta: [formatDate(row.publishedAt.slice(0, 10))],
+      status: row.isEmergency ? 'emergency' : row.priority,
+    })),
+    memory,
+  };
+}
+
 /**
  * Answer one module question from an authorized snapshot. A missing module means the host app could
  * not read it for this account, which is reported rather than guessed.
@@ -388,7 +635,8 @@ export function answerPortalRequest(
   message: string,
   module: PortalModule,
   snapshot: PortalSnapshot | null,
-  memory?: ToolMemory
+  memory?: ToolMemory,
+  clock: PortalClock = { now: Date.now(), timeZone: 'UTC' }
 ): ToolAnswer {
   if (!snapshot) {
     return { title: MODULE_TITLE[module], text: MODULE_UNAVAILABLE[module], records: [], memory: memory || { lastModule: module } };
@@ -400,6 +648,14 @@ export function answerPortalRequest(
   if (module === 'assignments') {
     const rows = shapeAssignments(snapshot.assignments);
     return rows ? answerAssignments(message, rows, memory) : { title: MODULE_TITLE.assignments, text: MODULE_UNAVAILABLE.assignments, records: [], memory: { lastModule: 'assignments' } };
+  }
+  if (module === 'timetable') {
+    const rows = shapeTimetable(snapshot.timetable);
+    return rows ? answerTimetable(message, rows, clock) : { title: MODULE_TITLE.timetable, text: MODULE_UNAVAILABLE.timetable, records: [], memory: { lastModule: 'timetable' } };
+  }
+  if (module === 'announcements') {
+    const rows = shapeAnnouncements(snapshot.announcements);
+    return rows ? answerAnnouncements(message, rows) : { title: MODULE_TITLE.announcements, text: MODULE_UNAVAILABLE.announcements, records: [], memory: { lastModule: 'announcements' } };
   }
   const rows = shapeContacts(snapshot.contacts);
   return rows ? answerContacts(message, rows) : { title: MODULE_TITLE.contacts, text: MODULE_UNAVAILABLE.contacts, records: [], memory: { lastModule: 'contacts' } };
