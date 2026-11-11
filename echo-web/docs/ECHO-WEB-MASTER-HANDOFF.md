@@ -4,10 +4,12 @@ Updated: 2026-11-11. Local branch: `main`, based on `9d761e6`. FreeLLMAPI is
 ECHO's verified primary conversational provider; deterministic commands,
 security gates and offline fallback are preserved; optional free browser speech
 is implemented. Phase 1 (conversational follow-up navigation), Phase 4 (Lost &
-Found), Phase 5 (attendance, assignments, contacts) and Phase 6 (timetable,
-announcements) are complete and verified end to end. FreeLLMAPI was re-verified
-live on 2026-11-11. ECHO still routes data deterministically: answers are composed
-server-side and no record reaches the model.
+Found), Phase 5 (attendance, assignments, contacts), Phase 6 (timetable,
+announcements) and Phase 7 (model-assisted tool routing) are complete and
+verified end to end. FreeLLMAPI was re-verified live on 2026-11-11. The model
+chooses which read-only tools answer a multi-module question, but every answer is
+still composed server-side from the authorized snapshot: no record text reaches
+the provider.
 
 ## Phase 1 - conversational follow-up navigation (2026-11-09)
 
@@ -239,6 +241,44 @@ resolution against a fixed clock, a named day, weekend fallback, time-zone
 correctness, room lookup, announcement listing, unread filtering, keyword search,
 an unreadable source, and no cross-account timetable exposure.
 
+## Phase 7 - model-assisted tool routing (2026-11-11)
+
+`server/services/echoToolSelect.ts` adds a router step that never becomes a data
+path. It is attempted only for **multi-module** messages (two or more module cues),
+so single-module questions and commands keep the deterministic fast path and add
+no provider latency.
+
+The model sees the user message, the last four turns and a fixed catalogue of six
+tool names with descriptions. It returns only
+`{"tool_calls":[{"tool":"get_attendance","args":{"focus":"..."}}]}`.
+
+Server-side guarantees, each covered by a test:
+
+- **Allowlist.** Names outside the six tools are rejected and the reply says so
+  without retrieving anything — an unknown tool can never execute.
+- **Argument allowlist.** The only accepted key is `focus`, a string of at most 80
+  characters. `studentId`, role, SQL, table names and query strings all fail
+  validation and are reported as invalid arguments.
+- **Identity is never model-supplied.** Execution uses `readPortal(identity)` /
+  `readLostFound` exactly as the deterministic path does; the ECHO session's
+  `sub` is the only source of who is asking.
+- **No records in the prompt.** The provider request is asserted (in a test) to
+  contain no assignment title, room, teacher, announcement or Lost & Found text —
+  only the catalogue. Answers are composed from the snapshot after selection.
+- **Bounded execution.** At most three tools, duplicates dropped by
+  `tool|args`, one provider call per message, 8 s timeout, and any failure falls
+  through to the deterministic or conversational path. There is no retry loop.
+- **Multi-module composition.** Attendance + assignments answered in one reply,
+  with deduplicated text and up to eight cards. Follow-ups still use session
+  memory, and the modules remain independently authorized.
+
+Browser evidence (`tests/echo-tools-browser.mjs`, `npm run test:echo:tools-browser`):
+real login, real widget, real server and real session against a **stubbed router
+model** — one multi-module question produces both modules' text and at least two
+cards without navigating, and `show Aarav's ...` is refused with no data. This is
+browser coverage of the wiring, not live-model evidence; the live provider run
+covers conversation, not routing.
+
 ## What changed
 
 1. **FreeLLMAPI is the primary brain.** Natural conversation goes to the
@@ -304,7 +344,8 @@ Command: `ECHO_USE_DESKTOP_SETTINGS=true node tests/echo-freellm-provider.mjs`.
 
 | Check | Result |
 | --- | --- |
-| 185 unit/integration tests: config, commands, conversation, navigation, Lost & Found, module tools, security | PASS |
+| 194 unit/integration tests: config, commands, conversation, navigation, Lost & Found, module tools, tool routing, security | PASS |
+| tool-routing browser regression | PASS (stubbed router model; real server/session/widget) |
 | `tsc --noEmit` | PASS |
 | production `vite build` | PASS |
 | full browser regression | PASS |
@@ -353,6 +394,11 @@ PORTAL_BOOTSTRAP_PASSWORD=<16+ char production bootstrap secret>
   or running on Vercel; seeds the principal's password; sample accounts get random
   unusable hashes.
 - Legacy `FREELMAPI_*` and `ECHO_MODEL_*` aliases still work.
+- `ECHO_PORTAL_TIMEZONE` decides "today"/"next class". It defaults to `UTC`.
+  The school record's address is in California, so the recommended production
+  value is `America/Los_Angeles`; **`Asia/Kolkata` was not applied** because
+  nothing in the portal data supports it. Set it per deployment only if the
+  school's actual timezone changes.
 - `/api/echo/provider` reports configured/reachable/model/base host; it never
   exposes the key.
 
@@ -417,6 +463,12 @@ No credentials were exposed to frontend code. No paid provider is enabled.
   contacts, timetable, announcements), zone-aware date handling, intent
   boundaries, aggregation, cross-module memory.
 - `tests/echo-tools.test.ts`: 23 module-tool, memory and authorization tests.
+- `server/services/echoToolSelect.ts`: model-assisted router, allowlist and
+  argument validation, bounded execution, server-side composition.
+- `tests/echo-tool-select.test.ts`: 9 routing, allowlist, no-record-leak and
+  fallback tests.
+- `tests/echo-tools-browser.mjs`: browser regression for multi-module answers and
+  refusal (stubbed router model).
 - `tests/echo-lostfound.test.ts`: 12 Lost & Found retrieval, memory and
   authorization tests.
 - `server/index.ts`: authenticated `/api/echo/config`, `/api/echo/provider`, ECHO
@@ -451,11 +503,12 @@ wake word). Phase 4 Lost & Found: `708fe80`
 (feat(echo): answer Lost & Found questions from authorized records). Phase 5
 module tools: `4a99067` (feat(echo): generalize authorized read-only tools across
 modules). Phase 6 timetable and announcements: `ad0e592`
-(feat(echo): read timetable and announcements with zone-aware dates).
-Documentation commits sit on top; use `git log --oneline` for the exact current
-HEAD.
+(feat(echo): read timetable and announcements with zone-aware dates). Phase 7
+tool routing: `664fd44` (feat(echo): route multi-module questions through
+allowlisted tools). Documentation commits sit on top; use `git log --oneline` for
+the exact current HEAD.
 
-`npm run test:echo`: **185/185 PASS**.
+`npm run test:echo`: **194/194 PASS**.
 `tsc --noEmit`: PASS.
 `npm run build`: PASS (2045 modules).
 `npm run test:echo:browser`: PASS, including the real built-in engine run.
@@ -477,11 +530,11 @@ status alone is not provider proof. Do not force-push.
    sent to a provider today; answers would be composed server-side). Staff rows
    stay out until per-record scoping is designed, because a teacher's view spans
    every student.
-2. **Model-driven tool selection.** Not implemented. Routing is deterministic by
-   design so an injected record cannot nominate a tool. A safe design would let a
-   model propose `{tool, args}` and have the server validate the name against this
-   allowlist, re-derive identity from the session, and ignore any argument that
-   names another account. Do not build this on prompt trust.
+2. **Live-model routing evidence.** Phase 7 is verified with a stubbed router and
+   with unit/integration tests; the real FreeLLMAPI run proves conversation, not
+   tool selection. Re-run `ECHO_USE_DESKTOP_SETTINGS=true node
+   tests/echo-freellm-provider.mjs` after adding a multi-module prompt to it if
+   live routing proof is needed. Do not infer routing accuracy from a stub.
 3. **Charts.** No chart is rendered. Cards and text only; `recharts` is available
    and attendance/assignment data is now structured enough to chart once there is
    a validated schema.
@@ -515,18 +568,19 @@ command/conversation/Stop/TTS path) are complete. FreeLLMAPI is still the primar
 conversational brain, with deterministic commands, security gates, offline
 fallback and free browser speech in both directions.
 
-Phases 4-6 are complete: Lost & Found, attendance, assignments, contacts,
-timetable and announcements, all through `server/services/echoTools.ts` with
-cross-module subject memory. FreeLLMAPI re-verified live on 2026-11-11
-(305 models, `command-a-plus-05-2026`, 1.08-1.19 s turns). Next priorities, in
-order: (1) examinations only after a privacy decision; (2) model-driven tool
-selection with server-side allowlisting; (3) charts for validated attendance and
-assignment data. The portal has no documented grade-projection feature, so do not
+Phases 4-7 are complete: six data modules through `server/services/echoTools.ts`
+with cross-module subject memory, plus model-assisted routing
+(`server/services/echoToolSelect.ts`) that keeps every answer server-composed.
+FreeLLMAPI re-verified live on 2026-11-11 (305 models,
+`command-a-plus-05-2026`, 1.08-1.19 s turns). Next priorities, in order:
+(1) examinations only after a privacy decision; (2) charts for validated
+attendance and assignment data; (3) live-model routing evidence and per-record
+staff scoping. The portal has no documented grade-projection feature, so do not
 invent one. Real microphone and real-device audio verification still needs
 hardware this environment lacks.
 
 Do not recreate completed features, weaken tests or enable a paid provider.
-After any change, rerun `npm run test:echo` (185 tests), `npx tsc --noEmit`,
+After any change, rerun `npm run test:echo` (194 tests), `npx tsc --noEmit`,
 `npm run build` and `npm run test:echo:browser`; the opt-in provider test needs
 the FreeLLMAPI desktop gateway. Keep the Markdown/PDF handoffs and
 `F:\ECHO-Handoff` copies current. Verify the deployed site after pushing; do not
