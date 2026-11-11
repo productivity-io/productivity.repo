@@ -698,6 +698,23 @@ A frontend redesign is running in parallel. Backend work now happens on
   the integration suite passes on the merged result. The full interface list and
   PR checklist live in `ECHO-INTEGRATION-CONTRACT.md`.
 
+### Upstream integration (2026-11-12)
+
+`origin/main` advanced to `1762660`, a UI-only commit by `lgkx7d`
+(`feat(ui): MCB ultimate enterprise dashboard transformation`): 20 files under
+`src/**` plus `index.html`, `index.css` and `scripts/capture-visuals.mjs`. It
+contains no server, authentication, routing, upload or ECHO widget change.
+
+- Merged into `feature/echo-durable-integration` as `99790f2` with **no
+  conflicts**; no UI file was edited by the backend during the merge.
+- `npm run test:integration` passed on the merged tree: 204/204 tests, upload
+  access, restart persistence, production build, ECHO browser regression and tool
+  routing. Login selectors, dashboard render, launcher, navigation offers and
+  account isolation all still work with the redesigned pages.
+- One earlier run failed with a transient Chromium `Target crashed` in
+  `browser.newPage`; the suite passed alone and the immediate rerun passed, so it
+  is recorded as environment flakiness rather than an integration break.
+
 ## Remaining priorities (not implemented)
 
 1. **Remaining modules.** Examinations/marks, leave, library, transport and

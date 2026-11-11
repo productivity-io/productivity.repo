@@ -1,6 +1,7 @@
 # ECHO backend / frontend integration contract
 
 Status: backend branch `feature/echo-durable-integration`, ready for review.
+`origin/main` at `1762660` is merged in (merge commit `99790f2`) with no conflicts.
 No merge until the integration suite passes on the merged tree.
 
 ## Ownership boundary
@@ -18,8 +19,22 @@ No merge until the integration suite passes on the merged tree.
 `c33ee53` (durable ECHO state, private uploads, DB path, backup tool) and
 `9607604` (documentation) were pushed to `main` before the branch policy took
 effect. They are not reverted; this branch starts from that state and adds only
-integration documentation and the integrated test runner. No coworker commit
-existed at the last fetch (local and remote were identical).
+integration documentation and the integrated test runner.
+
+## Upstream UI merge
+
+- `1762660` by `lgkx7d` (`feat(ui): MCB ultimate enterprise dashboard
+transformation`) touches only `src/**`, `index.html`, `index.css` and
+  `scripts/capture-visuals.mjs`. No endpoint, auth, upload, routing or ECHO widget
+  code changed.
+- Merged into this branch as `99790f2` with no conflicts; no UI file was edited by
+  the backend during the merge.
+- Verified after the merge: login (`#login-identifier`, `#current-password`, Sign In),
+  dashboard render, ECHO launcher, commands, navigation offers, Lost & Found,
+  account isolation and upload access all still pass.
+- One integration run failed with a transient Chromium `Target crashed` in
+  `browser.newPage`; the suite passed alone and the immediate rerun passed. Treated
+  as environment flakiness, not an integration break.
 
 ## Interfaces the frontend can rely on
 
@@ -80,6 +95,8 @@ ECHO browser regression; the tool-routing browser regression.
 - [x] API and SSE contracts unchanged; `/uploads` auth change documented above.
 - [x] TypeScript, unit, upload, build and browser suites pass on the branch.
 - [x] `origin/main` fetched and compared; no coworker commits overwritten.
+- [x] Latest `origin/main` (`1762660`) merged with no conflicts (`99790f2`).
+- [x] `npm run test:integration` re-run on the merged branch: pass.
 - [ ] Reviewer approval.
 - [ ] Re-run `npm run test:integration` on the merged result before merging.
 - [ ] Production deployment with durable storage and a reachable HTTPS provider
