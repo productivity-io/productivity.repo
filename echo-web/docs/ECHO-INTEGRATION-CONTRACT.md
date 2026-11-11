@@ -1,8 +1,9 @@
 # ECHO backend / frontend integration contract
 
-Status: backend branch `feature/echo-durable-integration`, ready for review.
-`origin/main` at `1762660` is merged in (merge commit `99790f2`) with no conflicts.
-No merge until the integration suite passes on the merged tree.
+Status: **merged into `main`** as merge commit `2fa7879` (main was `36d86b6`
+before the merge). The branch is retained for follow-up work. Upstream UI commits
+`1762660` and `36d86b6` were merged into the branch first (`99790f2`, `aba297c`)
+with no conflicts.
 
 ## Ownership boundary
 
@@ -97,6 +98,12 @@ ECHO browser regression; the tool-routing browser regression.
 - [x] `origin/main` fetched and compared; no coworker commits overwritten.
 - [x] Latest `origin/main` (`1762660`) merged with no conflicts (`99790f2`).
 - [x] `npm run test:integration` re-run on the merged branch: pass.
+- [x] Merged into `main` directly as `2fa7879` under explicit authorization; no PR
+      tooling or required-review mechanism was available in this environment.
+- [x] Verified on `origin/main`: ECHO durable store, upload guard and the
+      redesigned UI components are all present.
+- [ ] Deployed and verified on a real host (blocked: no hosted database or volume,
+      no reachable HTTPS provider gateway).
 - [ ] Reviewer approval.
 - [ ] Re-run `npm run test:integration` on the merged result before merging.
 - [ ] Production deployment with durable storage and a reachable HTTPS provider

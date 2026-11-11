@@ -650,7 +650,8 @@ modules). Phase 6 timetable and announcements: `ad0e592`
 (feat(echo): read timetable and announcements with zone-aware dates). Phase 7
 tool routing: `664fd44`; Phase 8 live routing, fallback completion and provider
 attribution: `67a0e81`; Phase 9 durable ECHO state, private uploads and backups:
-`c33ee53`. Documentation commits sit on top; use `git log --oneline` for
+`c33ee53`; integration contract and CI heap fix: `b7220d5`, `9ccc98e`; upstream UI
+merges: `99790f2`, `aba297c`; final merge to main: `2fa7879`. Documentation commits sit on top; use `git log --oneline` for
 the exact current HEAD.
 
 `npm run test:echo`: **204/204 PASS**.
@@ -714,6 +715,25 @@ contains no server, authentication, routing, upload or ECHO widget change.
 - One earlier run failed with a transient Chromium `Target crashed` in
   `browser.newPage`; the suite passed alone and the immediate rerun passed, so it
   is recorded as environment flakiness rather than an integration break.
+
+### Merge to main (2026-11-12)
+
+- `origin/main` advanced again to `36d86b6` (`chore: add automated playwright
+  visual verification script`, one file under `scripts/`) after `1762660`. Both UI
+  commits were merged into the branch (`99790f2`, `aba297c`) with no conflicts.
+- Direct merging was permitted by the repository: `main` was fast-forwarded to
+  `36d86b6`, then the feature branch was merged normally as **`2fa7879`** and
+  pushed. No history rewrite, no force-push and no coworker commit reverted.
+- The first integrated run on this tree exposed a real failure: `tsc --noEmit`
+  aborted with `NewSpace::EnsureCurrentCapacity Allocation failed` once the
+  redesign added about 1,600 lines. `scripts/typecheck.mjs` now raises both heap
+  generations for the compiler only (commit `9ccc98e`); the full suite then passed.
+- `npm run test:integration` on the merged tree: 204/204 tests, upload access,
+  restart persistence, production build, ECHO browser regression and tool routing.
+- Verified on `origin/main` (`2fa7879`): `server/services/echoStateStore.ts`,
+  `server/services/uploadGuard.ts` and `src/components/ui/CommandPalette.tsx` are
+  all present, so the ECHO backend and the coworker's redesign are both in `main`.
+- No deployment was made or verified. The production blockers below are unchanged.
 
 ## Remaining priorities (not implemented)
 
