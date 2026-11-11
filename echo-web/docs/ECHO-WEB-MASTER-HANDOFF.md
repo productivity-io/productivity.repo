@@ -3,10 +3,10 @@
 Updated: 2026-11-11. Local branch: `main`, based on `9d761e6`. FreeLLMAPI is
 ECHO's verified primary conversational provider; deterministic commands,
 security gates and offline fallback are preserved; optional free browser speech
-is implemented. Phase 1 (conversational follow-up navigation) and Phase 4 for
-Lost & Found (authorized read-only retrieval with grounded answers) are complete
-and verified end to end. ECHO is still routing without model tool-calling: data
-answers are composed server-side, not generated.
+is implemented. Phase 1 (conversational follow-up navigation), Phase 4 (Lost &
+Found) and Phase 5 (attendance, assignments, contacts through a shared tool
+layer) are complete and verified end to end. ECHO is still routing without model
+tool-calling: data answers are composed server-side, not generated.
 
 ## Phase 1 - conversational follow-up navigation (2026-11-09)
 
@@ -144,6 +144,56 @@ working. The browser regression also asserts real-database retrieval through the
 built-in engine, follow-up resolution, redaction in the raw SSE, card rendering
 and a hostile record that must not execute.
 
+## Phase 5 - application-wide module tools (2026-11-11)
+
+The Lost & Found reader is now one instance of a shared layer rather than a
+special case. `server/services/echoTools.ts` owns shaping, intent detection,
+aggregation, phrasing and cross-module memory; `server/index.ts` owns scoping.
+
+- **One snapshot, scoped server-side.** `readPortal(identity)` resolves the
+  account id from the ECHO session, looks up that user's student row, and returns
+  only what the existing page APIs would return: contacts (directory-wide),
+  attendance and assignments for that student's own id, class and section. A
+  staff account gets the directory and nothing else, because a teacher's view
+  spans every student and per-record staff scoping is not designed.
+- **Attendance** answers overall rate and per-subject rates from real rows,
+  stating its arithmetic out loud (late counts as attended, excused sessions are
+  excluded). "Which subject is lowest?" is computed, not assumed.
+- **Assignments** reads real due dates and submission status: open work, due
+  today/tomorrow/this week, overdue, and per-subject filters.
+- **Contacts** searches the published directory by name, role, department and
+  category, and falls back to academic staff for questions about submissions or
+  marks instead of inventing a person.
+- **Cross-module memory.** Analysing attendance stores the weakest subject, so
+  "what assignments do I have in that subject?" resolves it. Memory is per ECHO
+  session, 30-minute TTL, cleared on revocation, never shared across accounts.
+- **Unavailable is stated.** If the host app cannot read a module, ECHO says so
+  and emits no cards; it never estimates a percentage or a deadline.
+- **Cards.** The same `done.records` channel renders module results, text-only.
+
+### Module coverage matrix
+
+| Module | Tool | Authorization | Status |
+| --- | --- | --- | --- |
+| Attendance | own sessions, per-subject rates | `students.userId = account id` | Implemented, tested |
+| Assignments | own class/section work + own submissions, due/overdue filters | own class & section | Implemented, tested |
+| Contacts | published staff directory | any signed-in account (mirrors `/api/contacts`) | Implemented, tested |
+| Lost & Found | items and claim status | any signed-in account (mirrors `/api/lost-found`) | Implemented, tested |
+| Examinations / marks | none | would need a provider-privacy decision | Not implemented |
+| Timetable | none | read-only source exists (`/api/timetable`) | Not implemented |
+| Announcements | none | read-only source exists (`/api/announcements`) | Not implemented |
+| Leave, library, transport, portfolio | none | — | Not implemented |
+| Staff attendance / assignments | none | per-record staff scoping undesigned | Not implemented |
+
+14 tests in `tests/echo-tools.test.ts` cover attendance arithmetic, weakest-subject
+calculation, cross-module subject follow-up, deadline and overdue filtering, staff
+search, the academic fallback, an unmatched search, an unreadable module,
+cross-account isolation, injection inside an assignment title, navigation still
+winning, and Lost & Found still working beside the new tools. Two intent
+boundaries were fixed during this work and are asserted by the existing suites:
+location questions ("where are my marks?") keep the navigation offer, and
+explanations ("tell me about assignments") are not answered with records.
+
 ## What changed
 
 1. **FreeLLMAPI is the primary brain.** Natural conversation goes to the
@@ -205,7 +255,7 @@ Command: `ECHO_USE_DESKTOP_SETTINGS=true node tests/echo-freellm-provider.mjs`.
 
 | Check | Result |
 | --- | --- |
-| 162 unit/integration tests: config, commands, conversation, navigation, Lost & Found, security | PASS |
+| 175 unit/integration tests: config, commands, conversation, navigation, Lost & Found, module tools, security | PASS |
 | `tsc --noEmit` | PASS |
 | production `vite build` | PASS |
 | full browser regression | PASS |
@@ -313,6 +363,9 @@ No credentials were exposed to frontend code. No paid provider is enabled.
   (including the separate Lost & Found topic).
 - `server/services/echoData.ts`: authorized read-only Lost & Found tool, field
   allowlist, intent detection, grounded answer composition, record cards.
+- `server/services/echoTools.ts`: shared module tools (attendance, assignments,
+  contacts), intent boundaries, aggregation, cross-module memory.
+- `tests/echo-tools.test.ts`: 14 module-tool, memory and authorization tests.
 - `tests/echo-lostfound.test.ts`: 12 Lost & Found retrieval, memory and
   authorization tests.
 - `server/index.ts`: authenticated `/api/echo/config`, `/api/echo/provider`, ECHO
@@ -344,11 +397,12 @@ conversational follow-ups). Phase 2 workspace modes: `6cef2ab`
 (feat(echo): add expanded and full-screen workspace modes). Phase 3 voice input:
 `89202cb` (feat(echo): add optional microphone input and a foreground "Echo"
 wake word). Phase 4 Lost & Found: `708fe80`
-(feat(echo): answer Lost & Found questions from authorized records).
-Documentation commits sit on top; use `git log --oneline` for the exact current
-HEAD.
+(feat(echo): answer Lost & Found questions from authorized records). Phase 5
+module tools: `4a99067` (feat(echo): generalize authorized read-only tools across
+modules). Documentation commits sit on top; use `git log --oneline` for the exact
+current HEAD.
 
-`npm run test:echo`: **162/162 PASS**.
+`npm run test:echo`: **175/175 PASS**.
 `tsc --noEmit`: PASS.
 `npm run build`: PASS (2045 modules).
 `npm run test:echo:browser`: PASS, including the real built-in engine run.
@@ -365,16 +419,15 @@ status alone is not provider proof. Do not force-push.
 
 ## Remaining priorities (not implemented)
 
-1. **More authorized tools.** Lost & Found is the first and only tool so far.
-`GET /api/attendance` (`server/index.ts` ~line 930) and
-`GET /api/assignments` (~line 1200) already branch on `req.currentUser!.role`;
-the student branch returns only that student's own records, the staff branch
-returns every student's rows. Add each as its own `readX` option on
-`createEchoServiceRouter` with its own field allowlist, and pass the model only
-aggregates (counts, rates, due dates) - never names or raw staff-visible rows -
-because model prompts leave the server. There is no model tool-calling loop by
-design, and one cannot be verified here: `test:echo:provider` needs the FreeLLMAPI
-desktop gateway, which is not reachable in this environment.
+1. **Remaining modules.** Attendance, assignments, contacts and Lost & Found have
+   tools. Still unsupported through ECHO: examinations/marks, timetable,
+   announcements, leave, library, transport, portfolio, and any staff-scoped
+   records. Examinations need a privacy decision before implementation (nothing
+   private is sent to a provider today; answers would be composed server-side).
+   Timetable and announcements are the cheapest next additions - both are
+   read-only and already served by `/api/timetable` and `/api/announcements`.
+   Staff attendance/assignment rows stay out until per-record staff scoping is
+   designed, because a teacher's view spans every student.
 2. **Charts/tables in the workspace.** `recharts` is already a dependency, but
 ECHO renders text only. Structured results need server-validated payloads first,
 and only where real supported data exists.
@@ -405,16 +458,16 @@ command/conversation/Stop/TTS path) are complete. FreeLLMAPI is still the primar
 conversational brain, with deterministic commands, security gates, offline
 fallback and free browser speech in both directions.
 
-Phase 4 is implemented for Lost & Found only: `server/services/echoData.ts` plus
-`readLostFound` on the router, with session-scoped result memory, sanitized fields
-and record cards. Next priorities, in order: (1) the same pattern for attendance
-and assignments, scoped by `sub`/role with aggregates only; (2) charts for
-validated numeric results, only where real supported data exists. The portal has
-no documented grade-projection feature, so do not invent one. Real microphone and
-real-device audio verification still needs hardware this environment lacks.
+Phase 4 (Lost & Found) and Phase 5 (attendance, assignments and contacts through
+the shared `server/services/echoTools.ts` layer, with cross-module subject memory)
+are complete. Next priorities, in order: (1) timetable and announcement tools,
+then examinations only after a privacy decision; (2) charts for validated numeric
+results. The portal has no documented grade-projection feature, so do not invent
+one. Real microphone and real-device audio verification still needs hardware this
+environment lacks.
 
 Do not recreate completed features, weaken tests or enable a paid provider.
-After any change, rerun `npm run test:echo` (162 tests), `npx tsc --noEmit`,
+After any change, rerun `npm run test:echo` (175 tests), `npx tsc --noEmit`,
 `npm run build` and `npm run test:echo:browser`; the opt-in provider test needs
 the FreeLLMAPI desktop gateway. Keep the Markdown/PDF handoffs and
 `F:\ECHO-Handoff` copies current. Verify the deployed site after pushing; do not
